@@ -38,18 +38,8 @@ func Run() error {
 	if err := os.MkdirAll(desktopDir, 0o755); err != nil {
 		return err
 	}
-	desktop := fmt.Sprintf(`[Desktop Entry]
-Type=Application
-Name=LinBoard
-GenericName=Clipboard Manager
-Comment=Windows-style clipboard history for Linux
-Exec=%s
-Icon=linboard
-Terminal=false
-Categories=Utility;
-StartupNotify=false
-`, filepath.Join(binDir, "linboard-start"))
-	if err := os.WriteFile(filepath.Join(desktopDir, "linboard.desktop"), []byte(desktop), 0o644); err != nil {
+	desktopBody := desktopEntry(launcher, false)
+	if err := os.WriteFile(filepath.Join(desktopDir, "linboard.desktop"), []byte(desktopBody), 0o644); err != nil {
 		return err
 	}
 
@@ -57,19 +47,8 @@ StartupNotify=false
 	if err := os.MkdirAll(autostartDir, 0o755); err != nil {
 		return err
 	}
-	autostart := fmt.Sprintf(`[Desktop Entry]
-Type=Application
-Name=LinBoard
-GenericName=Clipboard Manager
-Comment=Windows-style clipboard history for Linux
-Exec=%s
-Icon=linboard
-Terminal=false
-Categories=Utility;
-StartupNotify=false
-X-GNOME-Autostart-enabled=true
-`, launcher)
-	if err := os.WriteFile(filepath.Join(autostartDir, "linboard.desktop"), []byte(autostart), 0o644); err != nil {
+	autostartBody := desktopEntry(launcher, true)
+	if err := os.WriteFile(filepath.Join(autostartDir, "linboard.desktop"), []byte(autostartBody), 0o644); err != nil {
 		return err
 	}
 
@@ -99,6 +78,24 @@ func hotkeyExecutable() (string, error) {
 		return "", err
 	}
 	return filepath.EvalSymlinks(exe)
+}
+
+func desktopEntry(execPath string, autostart bool) string {
+	extra := ""
+	if autostart {
+		extra = "X-GNOME-Autostart-enabled=true\n"
+	}
+	return fmt.Sprintf(`[Desktop Entry]
+Type=Application
+Name=LinBoard
+GenericName=Clipboard Manager
+Comment=Windows-style clipboard history for Linux
+Exec=%s
+Icon=linboard
+Terminal=false
+Categories=Utility;
+StartupNotify=false
+%s`, execPath, extra)
 }
 
 func copyFile(src, dst string) error {

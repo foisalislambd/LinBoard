@@ -10,9 +10,9 @@ import (
 func testStore(t *testing.T, max int) *Store {
 	t.Helper()
 	dir := t.TempDir()
-	origHome := os.Getenv("HOME")
+	// config.DataDir uses os.UserHomeDir — HOME on Unix, USERPROFILE on Windows.
 	t.Setenv("HOME", dir)
-	t.Cleanup(func() { _ = os.Setenv("HOME", origHome) })
+	t.Setenv("USERPROFILE", dir)
 
 	s, err := Open(max)
 	if err != nil {
@@ -82,6 +82,7 @@ func TestPinnedSurvivesPrune(t *testing.T) {
 func TestPersistReload(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 
 	s1, err := Open(50)
 	if err != nil {

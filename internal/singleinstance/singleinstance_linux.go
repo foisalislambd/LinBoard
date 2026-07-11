@@ -1,7 +1,8 @@
+//go:build linux
+
 package singleinstance
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,9 +12,6 @@ import (
 	"github.com/foisal/linboard/internal/config"
 	"github.com/foisal/linboard/internal/ipc"
 )
-
-// ErrAlreadyRunning is returned when another LinBoard instance holds the lock.
-var ErrAlreadyRunning = errors.New("LinBoard is already running")
 
 // Acquire ensures only one LinBoard GUI instance runs. Returns a release func.
 func Acquire() (func(), error) {

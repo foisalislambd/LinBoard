@@ -17,7 +17,7 @@ const (
 type mateBackend struct{}
 
 func (b *mateBackend) start(_ func()) error {
-	exe, err := executablePath()
+	exe, err := ExecutableForShortcut()
 	if err != nil {
 		return err
 	}

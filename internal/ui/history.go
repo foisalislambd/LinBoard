@@ -55,11 +55,9 @@ type HistoryWindow struct {
 	clips    []store.Clip
 	selected int
 	search   *widget.Entry
-	mu         sync.Mutex
-	visible    bool
+	mu       sync.Mutex
+	visible  bool
 	lastToggle time.Time
-
-	onClose func()
 }
 
 func NewHistoryWindow(app fyne.App, s *store.Store, cfg *config.Config) *HistoryWindow {
@@ -188,7 +186,7 @@ func (h *HistoryWindow) build() {
 		h.list,
 	)
 
-	bg := canvas.NewRectangle(color.NRGBA{R: 30, G: 30, B: 35, A: 250})
+	bg := canvas.NewRectangle(historyBackground(h.app))
 	bg.CornerRadius = 8
 	h.win.SetContent(container.NewStack(bg, container.NewPadded(content)))
 
@@ -245,8 +243,13 @@ func (h *HistoryWindow) RefreshIfVisible() {
 
 func (h *HistoryWindow) refreshList() {
 	search := strings.TrimSpace(h.search.Text)
-	clips, err := h.store.List(search, 100)
+	limit := h.cfg.MaxHistory
+	if limit <= 0 {
+		limit = 100
+	}
+	clips, err := h.store.List(search, limit)
 	if err != nil {
+		log.Printf("list clips: %v", err)
 		return
 	}
 	h.mu.Lock()
@@ -300,7 +303,9 @@ func (h *HistoryWindow) deleteSelected() {
 	}
 	id := h.clips[h.selected].ID
 	h.mu.Unlock()
-	_ = h.store.Delete(id)
+	if err := h.store.Delete(id); err != nil {
+		log.Printf("delete clip: %v", err)
+	}
 	h.refreshList()
 }
 
@@ -312,7 +317,9 @@ func (h *HistoryWindow) pinSelected() {
 	}
 	id := h.clips[h.selected].ID
 	h.mu.Unlock()
-	_ = h.store.TogglePin(id)
+	if err := h.store.TogglePin(id); err != nil {
+		log.Printf("pin clip: %v", err)
+	}
 	h.refreshList()
 }
 
@@ -353,11 +360,15 @@ func (h *HistoryWindow) Hide() {
 	h.mu.Lock()
 	h.visible = false
 	h.mu.Unlock()
-	if h.onClose != nil {
-		h.onClose()
-	}
 }
 
-func (h *HistoryWindow) OnClose(fn func()) {
-	h.onClose = fn
+func historyBackground(app fyne.App) color.Color {
+	th := app.Settings().Theme()
+	variant := app.Settings().ThemeVariant()
+	c := th.Color(theme.ColorNameOverlayBackground, variant)
+	if nrgba, ok := c.(color.NRGBA); ok {
+		nrgba.A = 250
+		return nrgba
+	}
+	return c
 }

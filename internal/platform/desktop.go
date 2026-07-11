@@ -8,8 +8,7 @@ import (
 type Desktop int
 
 const (
-	DesktopUnknown Desktop = iota
-	DesktopGNOME
+	DesktopGNOME Desktop = iota
 	DesktopKDE
 	DesktopXFCE
 	DesktopCinnamon
@@ -49,10 +48,8 @@ func DesktopName() string {
 		return "Cinnamon"
 	case DesktopMATE:
 		return "MATE"
-	case DesktopOther:
-		return "Linux"
 	default:
-		return "unknown"
+		return "Linux"
 	}
 }
 

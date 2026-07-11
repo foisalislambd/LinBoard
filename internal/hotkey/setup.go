@@ -34,18 +34,30 @@ func (r VerifyReport) Healthy() bool {
 }
 
 // Verify checks shortcut prerequisites after SetupAt.
-func Verify(exe string) VerifyReport {
-	r := VerifyReport{Binary: exe}
+func Verify(exe string) (r VerifyReport) {
+	r = VerifyReport{Binary: exe}
+	// Named return so defer can append paste checks to the value actually returned.
 	defer appendPasteVerify(&r)
 
-	if platform.IsMATE() {
-		return verifyMATEShortcut(r, exe)
-	}
-	if !platform.IsGNOME() {
+	switch platform.CurrentDesktop() {
+	case platform.DesktopGNOME:
+		r = verifyGNOMEShortcut(r, exe)
+	case platform.DesktopMATE:
+		r = verifyMATEShortcut(r, exe)
+	case platform.DesktopXFCE:
+		r = verifyXFCEShortcut(r, exe)
+	case platform.DesktopKDE:
+		r = verifyKDEShortcut(r, exe)
+	case platform.DesktopCinnamon:
+		r = verifyCinnamonShortcut(r, exe)
+	default:
 		r.OK = append(r.OK, "desktop: "+platform.DesktopName())
-		return r
+		r.Warn = append(r.Warn, "automatic shortcut verify not available for this desktop — test Super+V manually")
 	}
+	return
+}
 
+func verifyGNOMEShortcut(r VerifyReport, exe string) VerifyReport {
 	if !hasBin("gsettings") {
 		r.Fail = append(r.Fail, "gsettings not found")
 		return r
@@ -105,6 +117,72 @@ func Verify(exe string) VerifyReport {
 		}
 	}
 
+	return r
+}
+
+func verifyKDEShortcut(r VerifyReport, exe string) VerifyReport {
+	r.OK = append(r.OK, "desktop: KDE Plasma")
+	path := kdeHotkeysPath()
+	content := readFile(path)
+	if content == "" {
+		r.Fail = append(r.Fail, "khotkeysrc missing — Super+V may not be registered")
+		return r
+	}
+	if !strings.Contains(content, "linboard-toggle") {
+		r.Fail = append(r.Fail, "LinBoard entry not found in khotkeysrc")
+		return r
+	}
+	want := exe + " toggle"
+	if !strings.Contains(content, want) {
+		r.Warn = append(r.Warn, fmt.Sprintf("khotkeys command may be stale (want %q)", want))
+	} else {
+		r.OK = append(r.OK, "khotkeys command OK")
+	}
+	if !strings.Contains(content, "Key=Meta+V") {
+		r.Warn = append(r.Warn, "Meta+V binding not found in khotkeysrc")
+	} else {
+		r.OK = append(r.OK, "binding: Meta+V")
+	}
+	return r
+}
+
+func verifyCinnamonShortcut(r VerifyReport, exe string) VerifyReport {
+	r.OK = append(r.OK, "desktop: Cinnamon")
+	if !hasBin("gsettings") {
+		r.Fail = append(r.Fail, "gsettings not found")
+		return r
+	}
+	listSchema := "org.cinnamon.desktop.keybindings"
+	path := "/org/cinnamon/desktop/keybindings/custom-keybindings/custom-linboard/"
+	fullSchema := listSchema + ".custom-keybinding:" + path
+
+	paths, err := gsettingsGetArray(listSchema, "custom-keybindings")
+	if err != nil || len(paths) == 0 {
+		paths, err = gsettingsGetArray(listSchema, "custom-list")
+	}
+	if err != nil || !containsPath(paths, path) {
+		r.Fail = append(r.Fail, "custom-linboard not in Cinnamon keybindings list")
+		return r
+	}
+	r.OK = append(r.OK, "registered in Cinnamon keybindings")
+
+	cmd, err := gsettingsCommand(fullSchema, "command")
+	want := exe + " toggle"
+	if err != nil {
+		r.Fail = append(r.Fail, "Cinnamon shortcut command not set")
+	} else if cmd != want {
+		r.Warn = append(r.Warn, fmt.Sprintf("Cinnamon command is %q (want %q)", cmd, want))
+	} else {
+		r.OK = append(r.OK, "Cinnamon command OK")
+	}
+	bind, err := gsettingsGet(fullSchema, "binding")
+	if err != nil {
+		r.Fail = append(r.Fail, "Cinnamon shortcut binding not set")
+	} else if strings.Trim(bind, "'") != "<Super>v" {
+		r.Warn = append(r.Warn, "binding is "+bind+" (want <Super>v)")
+	} else {
+		r.OK = append(r.OK, "binding: Super+V")
+	}
 	return r
 }
 

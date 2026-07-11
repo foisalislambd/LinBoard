@@ -18,7 +18,7 @@ const gnomeBindingName = "custom-linboard"
 type gnomeBackend struct{}
 
 func (b *gnomeBackend) start(_ func()) error {
-	exe, err := executablePath()
+	exe, err := ExecutableForShortcut()
 	if err != nil {
 		return err
 	}

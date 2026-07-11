@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/foisal/linboard/internal/config"
@@ -107,15 +108,9 @@ func (s *fileStore) sortedIndices() []int {
 	for i := range indices {
 		indices[i] = i
 	}
-	// pinned first, then newest
-	for i := 0; i < len(indices); i++ {
-		for j := i + 1; j < len(indices); j++ {
-			a, b := &s.clips[indices[i]], &s.clips[indices[j]]
-			if clipLess(b, a) {
-				indices[i], indices[j] = indices[j], indices[i]
-			}
-		}
-	}
+	sort.SliceStable(indices, func(i, j int) bool {
+		return clipLess(&s.clips[indices[i]], &s.clips[indices[j]])
+	})
 	return indices
 }
 

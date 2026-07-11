@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -76,8 +75,9 @@ func main() {
 
 	release, err := singleinstance.Acquire()
 	if err != nil {
-		if errors.Is(err, singleinstance.ErrAlreadyRunning) {
-			return // second launch — toggle forwarded via IPC
+		if err == singleinstance.ErrAlreadyRunning {
+			fmt.Println("LinBoard is already running — toggled history window.")
+			return
 		}
 		log.Fatal(err)
 	}

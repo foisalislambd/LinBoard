@@ -185,14 +185,36 @@ func (s *Store) pruneLocked() {
 		return
 	}
 	indices := s.sortedIndices()
-	keep := make(map[int64]bool, s.maxItems)
-	for i := 0; i < len(indices) && i < s.maxItems; i++ {
-		keep[s.clips[indices[i]].ID] = true
+	keep := make(map[int64]bool, len(s.clips))
+	pinnedN := 0
+	for _, idx := range indices {
+		c := s.clips[idx]
+		if !c.Pinned {
+			continue
+		}
+		keep[c.ID] = true
+		pinnedN++
+	}
+	// Fill remaining capacity with newest unpinned clips.
+	remain := s.maxItems - pinnedN
+	if remain < 0 {
+		remain = 0 // pinned alone may exceed max_history
+	}
+	for _, idx := range indices {
+		if remain == 0 {
+			break
+		}
+		c := s.clips[idx]
+		if c.Pinned {
+			continue
+		}
+		keep[c.ID] = true
+		remain--
 	}
 	out := s.clips[:0]
 	for i := range s.clips {
 		c := s.clips[i]
-		if keep[c.ID] || c.Pinned {
+		if keep[c.ID] {
 			out = append(out, c)
 			continue
 		}

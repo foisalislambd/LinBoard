@@ -12,7 +12,7 @@ import (
 
 // RegisterSystemShortcut binds Super+V to `linboard toggle` using the desktop environment API.
 func RegisterSystemShortcut() error {
-	exe, err := executablePath()
+	exe, err := ExecutableForShortcut()
 	if err != nil {
 		return err
 	}
@@ -22,10 +22,6 @@ func RegisterSystemShortcut() error {
 // RegisterSystemShortcutAt binds Super+V using a specific binary path.
 func RegisterSystemShortcutAt(exe string) error {
 	return SetupAt(exe)
-}
-
-func executablePath() (string, error) {
-	return ExecutableForShortcut()
 }
 
 // ExecutableForShortcut returns the binary used for Super+V (prefer ~/.local/bin).

@@ -11,20 +11,15 @@ var errFyneNotReady = errors.New("fyne clipboard not configured")
 
 // ReadToolName returns the active clipboard read backend for diagnostics.
 func ReadToolName() string {
-	if fyneAvailable() {
-		return "fyne"
-	}
-	if haveCommand("xclip") {
-		return "xclip"
-	}
-	if haveCommand("xsel") {
-		return "xsel"
-	}
-	return "none"
+	return clipboardBackendName()
 }
 
 // CopyToolName returns the active clipboard write backend for diagnostics.
 func CopyToolName() string {
+	return clipboardBackendName()
+}
+
+func clipboardBackendName() string {
 	if fyneAvailable() {
 		return "fyne"
 	}

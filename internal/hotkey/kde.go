@@ -16,7 +16,7 @@ import (
 type kdeBackend struct{}
 
 func (b *kdeBackend) start(_ func()) error {
-	exe, err := executablePath()
+	exe, err := ExecutableForShortcut()
 	if err != nil {
 		return err
 	}
@@ -36,7 +36,7 @@ func setupKDEHotkey(exe string) error {
 
 	uuid := "{linboard-toggle-0001}"
 	dataGroup := "Data_1 20 LinBoard"
-	path := filepath.Join(os.Getenv("HOME"), ".config", "khotkeysrc")
+	path := kdeHotkeysPath()
 
 	content := readFile(path)
 	if strings.Contains(content, "linboard-toggle") {
@@ -78,6 +78,10 @@ func setupKDEHotkey(exe string) error {
 	}
 	reloadKHotkeys()
 	return nil
+}
+
+func kdeHotkeysPath() string {
+	return filepath.Join(os.Getenv("HOME"), ".config", "khotkeysrc")
 }
 
 func patchKHotkeysINI(content, group, command string) (string, error) {

@@ -78,6 +78,8 @@ func New() (*App, error) {
 		a.fyneApp.Settings().SetTheme(theme.DarkTheme())
 	case "light":
 		a.fyneApp.Settings().SetTheme(theme.LightTheme())
+	default:
+		// "system" — leave Fyne default so the platform preference is used where supported.
 	}
 
 	a.history = ui.NewHistoryWindow(a.fyneApp, s, cfg)

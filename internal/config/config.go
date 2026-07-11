@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -101,6 +102,15 @@ func Load() (*Config, error) {
 func (c *Config) normalize() {
 	if c.MaxHistory < 1 {
 		c.MaxHistory = Default().MaxHistory
+	}
+	if c.MaxHistory > 5000 {
+		c.MaxHistory = 5000
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Theme)) {
+	case "light", "dark", "system":
+		c.Theme = strings.ToLower(strings.TrimSpace(c.Theme))
+	default:
+		c.Theme = "system"
 	}
 }
 
