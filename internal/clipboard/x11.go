@@ -2,11 +2,15 @@ package clipboard
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+const clipboardCmdTimeout = 2 * time.Second
 
 func haveCommand(name string) bool {
 	_, err := exec.LookPath(name)
@@ -30,7 +34,7 @@ func readTextXSel() (string, error) {
 }
 
 func writeTextXClip(text string) error {
-	return pipeToCommand("xclip", []string{"-selection", "clipboard"}, text)
+	return pipeToCommand("xclip", []string{"-selection", "clipboard", "-i"}, text)
 }
 
 func writeTextXSel(text string) error {
@@ -42,7 +46,7 @@ func readImageXClip() ([]byte, error) {
 }
 
 func writeImageXClip(data []byte) error {
-	return pipeToCommand("xclip", []string{"-selection", "clipboard", "-t", "image/png"}, data)
+	return pipeToCommand("xclip", []string{"-selection", "clipboard", "-t", "image/png", "-i"}, data)
 }
 
 func outputFromCommand(bin string, args []string) ([]byte, error) {
@@ -50,7 +54,9 @@ func outputFromCommand(bin string, args []string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := exec.Command(path, args...).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), clipboardCmdTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, args...).Output()
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +68,9 @@ func pipeToCommand(bin string, args []string, data any) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(path, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), clipboardCmdTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, args...)
 	switch v := data.(type) {
 	case string:
 		cmd.Stdin = strings.NewReader(v)

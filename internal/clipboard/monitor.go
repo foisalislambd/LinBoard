@@ -71,19 +71,24 @@ func (m *Monitor) pollText(ctx context.Context) {
 			if err != nil || text == "" {
 				continue
 			}
-
-			m.mu.Lock()
-			if text == m.lastText {
-				m.mu.Unlock()
+			if watchSuppress.Load() > 0 {
 				continue
 			}
-			m.lastText = text
+
+			m.mu.Lock()
+			seen := text == m.lastText
 			m.mu.Unlock()
+			if seen {
+				continue
+			}
 
 			if _, err := m.store.AddText(text); err != nil {
 				log.Printf("save text clip: %v", err)
 				continue
 			}
+			m.mu.Lock()
+			m.lastText = text
+			m.mu.Unlock()
 			m.notify()
 		}
 	}
@@ -106,20 +111,25 @@ func (m *Monitor) pollImage(ctx context.Context) {
 			if err != nil || len(data) == 0 {
 				continue
 			}
+			if watchSuppress.Load() > 0 {
+				continue
+			}
 
 			key := imageFingerprint(data)
 			m.mu.Lock()
-			if key == m.lastImg {
-				m.mu.Unlock()
+			seen := key == m.lastImg
+			m.mu.Unlock()
+			if seen {
 				continue
 			}
-			m.lastImg = key
-			m.mu.Unlock()
 
 			if _, err := m.store.AddImage(data); err != nil {
 				log.Printf("save image clip: %v", err)
 				continue
 			}
+			m.mu.Lock()
+			m.lastImg = key
+			m.mu.Unlock()
 			m.notify()
 		}
 	}
@@ -131,10 +141,17 @@ func (m *Monitor) notify() {
 	}
 }
 
+// HoldWatch pauses clipboard ingest (pair with ReleaseWatch).
+func HoldWatch() { watchSuppress.Add(1) }
+
+// ReleaseWatch resumes clipboard ingest after HoldWatch.
+func ReleaseWatch() { watchSuppress.Add(-1) }
+
 // CopyClip puts clip content on the system clipboard without pasting.
 func CopyClip(clip *store.Clip) error {
 	watchSuppress.Add(1)
-	defer watchSuppress.Add(-1)
+	// Hold ingest until the compositor has the new clipboard (and paste can finish).
+	defer time.AfterFunc(500*time.Millisecond, func() { watchSuppress.Add(-1) })
 
 	switch clip.ContentType {
 	case store.TypeImage:

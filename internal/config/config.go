@@ -49,7 +49,7 @@ func DataDir() (string, error) {
 		return "", err
 	}
 	data := filepath.Join(dir, "data")
-	if err := os.MkdirAll(data, 0o755); err != nil {
+	if err := os.MkdirAll(data, 0o700); err != nil {
 		return "", err
 	}
 	return data, nil
@@ -61,7 +61,7 @@ func ImagesDir() (string, error) {
 		return "", err
 	}
 	images := filepath.Join(dir, "images")
-	if err := os.MkdirAll(images, 0o755); err != nil {
+	if err := os.MkdirAll(images, 0o700); err != nil {
 		return "", err
 	}
 	return images, nil
@@ -123,5 +123,16 @@ func (c *Config) Save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(path)
+		if err2 := os.Rename(tmp, path); err2 != nil {
+			_ = os.Remove(tmp)
+			return err2
+		}
+	}
+	return nil
 }

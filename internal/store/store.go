@@ -59,21 +59,23 @@ func hashBytes(data []byte, contentType ContentType) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
 func makePreview(content string, contentType ContentType) string {
 	switch contentType {
 	case TypeImage:
 		return "[Image]"
 	case TypeURL:
-		if len(content) > 120 {
-			return content[:120] + "…"
-		}
-		return content
+		return truncateRunes(content, 120)
 	default:
 		lines := strings.Split(strings.TrimSpace(content), "\n")
-		first := lines[0]
-		if len(first) > 120 {
-			first = first[:120] + "…"
-		}
+		first := truncateRunes(lines[0], 120)
 		if len(lines) > 1 {
 			first += fmt.Sprintf(" (+%d lines)", len(lines)-1)
 		}
@@ -105,16 +107,18 @@ func (s *Store) AddText(content string) (*Clip, error) {
 	now := time.Now()
 
 	if i, existing := s.findByHash(hash); existing != nil {
+		prev := s.clips[i].CreatedAt
 		s.clips[i].CreatedAt = now
 		if err := s.saveLocked(); err != nil {
+			s.clips[i].CreatedAt = prev
 			return nil, err
 		}
-		s.pruneLocked()
 		c := s.clips[i]
 		return &c, nil
 	}
 
 	id := s.nextID
+	snapshot := cloneClips(s.clips)
 	s.nextID++
 	c := Clip{
 		ID:          id,
@@ -125,10 +129,17 @@ func (s *Store) AddText(content string) (*Clip, error) {
 		Hash:        hash,
 	}
 	s.clips = append(s.clips, c)
+	dropped := s.pruneInMemory()
 	if err := s.saveLocked(); err != nil {
+		s.clips = snapshot
+		s.nextID = id
 		return nil, err
 	}
-	s.pruneLocked()
+	removeClipFiles(dropped)
+	if kept := s.findByID(id); kept != nil {
+		cp := *kept
+		return &cp, nil
+	}
 	return &c, nil
 }
 
@@ -146,23 +157,26 @@ func (s *Store) AddImage(data []byte) (*Clip, error) {
 	filename := hash[:16] + ".png"
 	path := filepath.Join(s.imagesDir, filename)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
 			return nil, err
 		}
 	}
 
-	preview := fmt.Sprintf("[Image · %d KB]", len(data)/1024)
+	kb := (len(data) + 1023) / 1024
+	preview := fmt.Sprintf("[Image · %d KB]", kb)
 	if i, existing := s.findByHash(hash); existing != nil {
+		prev := s.clips[i].CreatedAt
 		s.clips[i].CreatedAt = now
 		if err := s.saveLocked(); err != nil {
+			s.clips[i].CreatedAt = prev
 			return nil, err
 		}
-		s.pruneLocked()
 		c := s.clips[i]
 		return &c, nil
 	}
 
 	id := s.nextID
+	snapshot := cloneClips(s.clips)
 	s.nextID++
 	c := Clip{
 		ID:          id,
@@ -173,57 +187,18 @@ func (s *Store) AddImage(data []byte) (*Clip, error) {
 		Hash:        hash,
 	}
 	s.clips = append(s.clips, c)
+	dropped := s.pruneInMemory()
 	if err := s.saveLocked(); err != nil {
+		s.clips = snapshot
+		s.nextID = id
 		return nil, err
 	}
-	s.pruneLocked()
+	removeClipFiles(dropped)
+	if kept := s.findByID(id); kept != nil {
+		cp := *kept
+		return &cp, nil
+	}
 	return &c, nil
-}
-
-func (s *Store) pruneLocked() {
-	if s.maxItems < 1 || len(s.clips) <= s.maxItems {
-		return
-	}
-	indices := s.sortedIndices()
-	keep := make(map[int64]bool, len(s.clips))
-	pinnedN := 0
-	for _, idx := range indices {
-		c := s.clips[idx]
-		if !c.Pinned {
-			continue
-		}
-		keep[c.ID] = true
-		pinnedN++
-	}
-	// Fill remaining capacity with newest unpinned clips.
-	remain := s.maxItems - pinnedN
-	if remain < 0 {
-		remain = 0 // pinned alone may exceed max_history
-	}
-	for _, idx := range indices {
-		if remain == 0 {
-			break
-		}
-		c := s.clips[idx]
-		if c.Pinned {
-			continue
-		}
-		keep[c.ID] = true
-		remain--
-	}
-	out := s.clips[:0]
-	for i := range s.clips {
-		c := s.clips[i]
-		if keep[c.ID] {
-			out = append(out, c)
-			continue
-		}
-		if c.ImagePath != "" {
-			_ = os.Remove(c.ImagePath)
-		}
-	}
-	s.clips = out
-	_ = s.saveLocked()
 }
 
 func (s *Store) List(search string, limit int) ([]Clip, error) {
@@ -282,11 +257,14 @@ func (s *Store) Delete(id int64) error {
 		if s.clips[i].ID != id {
 			continue
 		}
-		if s.clips[i].ImagePath != "" {
-			_ = os.Remove(s.clips[i].ImagePath)
-		}
+		dropped := s.clips[i]
 		s.clips = append(s.clips[:i], s.clips[i+1:]...)
-		return s.saveLocked()
+		if err := s.saveLocked(); err != nil {
+			s.clips = append(s.clips[:i], append([]Clip{dropped}, s.clips[i:]...)...)
+			return err
+		}
+		removeClipFiles([]Clip{dropped})
+		return nil
 	}
 	return nil
 }
@@ -294,18 +272,23 @@ func (s *Store) Delete(id int64) error {
 func (s *Store) ClearUnpinned() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := s.clips[:0]
+	snapshot := cloneClips(s.clips)
+	out := make([]Clip, 0, len(s.clips))
+	var dropped []Clip
 	for _, c := range s.clips {
 		if c.Pinned {
 			out = append(out, c)
 			continue
 		}
-		if c.ImagePath != "" {
-			_ = os.Remove(c.ImagePath)
-		}
+		dropped = append(dropped, c)
 	}
 	s.clips = out
-	return s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.clips = snapshot
+		return err
+	}
+	removeClipFiles(dropped)
+	return nil
 }
 
 func (s *Store) Count() (int, error) {
@@ -314,9 +297,18 @@ func (s *Store) Count() (int, error) {
 	return len(s.clips), nil
 }
 
+func cloneClips(in []Clip) []Clip {
+	out := make([]Clip, len(in))
+	copy(out, in)
+	return out
+}
+
 func FormatTime(t time.Time) string {
 	now := time.Now()
 	diff := now.Sub(t)
+	if diff < 0 {
+		return "Just now"
+	}
 	switch {
 	case diff < time.Minute:
 		return "Just now"

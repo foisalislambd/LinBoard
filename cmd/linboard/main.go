@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -75,7 +76,7 @@ func main() {
 
 	release, err := singleinstance.Acquire()
 	if err != nil {
-		if err == singleinstance.ErrAlreadyRunning {
+		if errors.Is(err, singleinstance.ErrAlreadyRunning) {
 			fmt.Println("LinBoard is already running — toggled history window.")
 			return
 		}

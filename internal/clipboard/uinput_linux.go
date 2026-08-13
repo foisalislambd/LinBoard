@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -18,11 +19,11 @@ const (
 	keyLeftCtrl = 29
 	keyV        = 47
 
-	uiSetEvbit    = 0x40045564 // _IOW('U', 100, int)
-	uiSetKeybit   = 0x40045565 // _IOW('U', 101, int)
-	uiDevSetup    = 0x405c5503 // _IOW('U', 3, struct uinput_setup)
-	uiDevCreate   = 0x5501     // _IO('U', 1)
-	uiDevDestroy  = 0x5502     // _IO('U', 2)
+	uiSetEvbit   = 0x40045564 // _IOW('U', 100, int)
+	uiSetKeybit  = 0x40045565 // _IOW('U', 101, int)
+	uiDevSetup   = 0x405c5503 // _IOW('U', 3, struct uinput_setup)
+	uiDevCreate  = 0x5501     // _IO('U', 1)
+	uiDevDestroy = 0x5502     // _IO('U', 2)
 )
 
 var errUinputUnavailable = errors.New("uinput unavailable")
@@ -147,6 +148,7 @@ func (kb *uinputKeyboard) sendCtrlV() error {
 		if err := kb.emitKey(step.code, step.value); err != nil {
 			return err
 		}
+		time.Sleep(8 * time.Millisecond)
 	}
 	return nil
 }

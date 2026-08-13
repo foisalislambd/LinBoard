@@ -34,13 +34,18 @@ func Toggle() error {
 	if err != nil {
 		return err
 	}
-	conn, err := net.Dial("unix", path)
+	conn, err := net.DialTimeout("unix", path, 2*time.Second)
 	if err != nil {
 		return fmt.Errorf("LinBoard is not running (start ./linboard first): %w", err)
 	}
 	defer conn.Close()
-	_, err = io.WriteString(conn, "toggle\n")
-	return err
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err = io.WriteString(conn, "toggle\n"); err != nil {
+		return err
+	}
+	buf := make([]byte, 8)
+	_, _ = conn.Read(buf) // ack from current servers; older ones may close
+	return nil
 }
 
 // ToggleWithRetry retries Toggle while the main instance is still starting its IPC server.
@@ -97,12 +102,14 @@ func (s *Server) serve() {
 
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 	line, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		return
 	}
 	switch strings.TrimSpace(strings.ToLower(line)) {
 	case "toggle":
+		_, _ = io.WriteString(conn, "ok\n")
 		if s.onToggle != nil {
 			s.onToggle()
 		}

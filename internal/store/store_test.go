@@ -1,8 +1,10 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -113,5 +115,80 @@ func TestPersistReload(t *testing.T) {
 	}
 	if filepath.Base(path) != "clips.json" {
 		t.Fatal("unexpected data path")
+	}
+}
+
+func TestPreviewTruncatesUTF8(t *testing.T) {
+	s := testStore(t, 10)
+	// 130 snowmen — byte-slicing would panic or split a rune.
+	long := strings.Repeat("☃", 130)
+	c, err := s.AddText(long)
+	if err != nil || c == nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(c.Preview, "\ufffd") {
+		t.Fatalf("preview contains replacement char: %q", c.Preview)
+	}
+	if !strings.HasSuffix(c.Preview, "…") {
+		t.Fatalf("preview should be truncated: %q", c.Preview)
+	}
+}
+
+func TestCorruptJSONRecovered(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+
+	s1, err := Open(50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := DataFilePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s1.Close()
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s2, err := Open(50)
+	if err != nil {
+		t.Fatalf("corrupt json should not prevent startup: %v", err)
+	}
+	defer s2.Close()
+	n, _ := s2.Count()
+	if n != 0 {
+		t.Fatalf("expected empty history after corrupt recover, got %d", n)
+	}
+	if _, err := os.Stat(path + ".corrupt"); err != nil {
+		t.Fatalf("corrupt backup missing: %v", err)
+	}
+}
+
+func TestPruneOnOpenHonorsMax(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+
+	s1, err := Open(50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		if _, err := s1.AddText(fmt.Sprintf("item-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = s1.Close()
+
+	s2, err := Open(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	n, _ := s2.Count()
+	if n != 3 {
+		t.Fatalf("open prune kept %d, want 3", n)
 	}
 }

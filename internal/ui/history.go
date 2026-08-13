@@ -47,16 +47,16 @@ func (p *pasteRow) Tapped(*fyne.PointEvent) {
 func (p *pasteRow) TappedSecondary(*fyne.PointEvent) {}
 
 type HistoryWindow struct {
-	app      fyne.App
-	win      fyne.Window
-	store    *store.Store
-	cfg      *config.Config
-	list     *widget.List
-	clips    []store.Clip
-	selected int
-	search   *widget.Entry
-	mu       sync.Mutex
-	visible  bool
+	app        fyne.App
+	win        fyne.Window
+	store      *store.Store
+	cfg        *config.Config
+	list       *widget.List
+	clips      []store.Clip
+	selected   int
+	search     *widget.Entry
+	mu         sync.Mutex
+	visible    bool
 	lastToggle time.Time
 }
 
@@ -200,16 +200,23 @@ func (h *HistoryWindow) build() {
 }
 
 func (h *HistoryWindow) handleKey(ev *fyne.KeyEvent) {
-	// Let the search field handle printable text input.
-	if h.win.Canvas().Focused() == h.search && ev.Name == fyne.KeyP {
-		return
-	}
+	searchFocused := h.win.Canvas().Focused() == h.search
 
 	switch ev.Name {
 	case fyne.KeyEscape:
 		h.Hide()
 	case fyne.KeyReturn, fyne.KeyEnter:
 		h.pasteSelected()
+	case fyne.KeyDelete:
+		if searchFocused {
+			return
+		}
+		h.deleteSelected()
+	case fyne.KeyP:
+		if searchFocused {
+			return
+		}
+		h.pinSelected()
 	case fyne.KeyUp:
 		h.mu.Lock()
 		sel := h.selected
@@ -225,10 +232,6 @@ func (h *HistoryWindow) handleKey(ev *fyne.KeyEvent) {
 		if sel < count-1 {
 			h.list.Select(sel + 1)
 		}
-	case fyne.KeyDelete:
-		h.deleteSelected()
-	case fyne.KeyP:
-		h.pinSelected()
 	}
 }
 
@@ -288,7 +291,9 @@ func (h *HistoryWindow) pasteClipAt(id int) {
 	if !h.cfg.PasteOnSelect {
 		return
 	}
+	clipboard.HoldWatch()
 	go func() {
+		defer clipboard.ReleaseWatch()
 		if err := clipboard.PasteToTarget(); err != nil {
 			log.Printf("paste failed: %v", err)
 		}

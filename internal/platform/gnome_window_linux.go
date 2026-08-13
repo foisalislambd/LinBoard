@@ -22,6 +22,11 @@ func gnomeRestoreFocus(seq string) {
 	if seq == "" {
 		return
 	}
+	for _, r := range seq {
+		if r < '0' || r > '9' {
+			return
+		}
+	}
 	js := `(function(seq) {
   const n = parseInt(seq, 10);
   for (const a of global.get_window_actors()) {

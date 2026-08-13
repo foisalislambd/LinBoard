@@ -1,6 +1,7 @@
 package clipboard
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -70,7 +71,9 @@ func useXdotoolPaste() bool {
 }
 
 func runPasteShortcut(s pasteShortcut) error {
-	cmd := exec.Command(s.bin, s.args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, s.bin, s.args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		detail := strings.TrimSpace(string(out))
