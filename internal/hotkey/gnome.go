@@ -10,7 +10,7 @@ import (
 
 const (
 	gnomeShellKeybindings = "org.gnome.shell.keybindings"
-	gnomeMessageTrayKey     = "toggle-message-tray"
+	gnomeMessageTrayKey   = "toggle-message-tray"
 )
 
 const gnomeBindingName = "custom-linboard"
@@ -72,13 +72,13 @@ func applyGNOMEHotkey(command string) error {
 		}
 	}
 
-	if err := gsettingsSet(schema, "name", "LinBoard"); err != nil {
+	if err := gsettingsSetString(schema, "name", "LinBoard"); err != nil {
 		return err
 	}
-	if err := gsettingsSet(schema, "command", command); err != nil {
+	if err := gsettingsSetString(schema, "command", command); err != nil {
 		return err
 	}
-	return gsettingsSet(schema, "binding", "<Super>v")
+	return gsettingsSetString(schema, "binding", "<Super>v")
 }
 
 func releaseGNOMESuperVConflict() error {

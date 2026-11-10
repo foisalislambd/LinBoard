@@ -94,7 +94,8 @@ func (h *HistoryWindow) build() {
 		func() fyne.CanvasObject {
 			pinIcon := widget.NewIcon(theme.MediaRecordIcon())
 			preview := widget.NewLabel("")
-			preview.Wrapping = fyne.TextTruncate
+			preview.Wrapping = fyne.TextWrapOff
+			preview.Truncation = fyne.TextTruncateClip
 			copyBtn := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), nil)
 			copyBtn.Importance = widget.LowImportance
 			timeLabel := widget.NewLabel("")
@@ -155,7 +156,7 @@ func (h *HistoryWindow) build() {
 			timeLabel.SetText(store.FormatTime(clip.CreatedAt))
 			c := clip
 			copyBtn.OnTapped = func() {
-				if err := clipboard.CopyClip(&c); err != nil {
+				if err := clipboard.CopyClip(h.store, &c); err != nil {
 					log.Printf("copy failed: %v", err)
 				}
 			}
@@ -283,7 +284,7 @@ func (h *HistoryWindow) pasteClipAt(id int) {
 	clip := h.clips[id]
 	h.mu.Unlock()
 
-	if err := clipboard.CopyClip(&clip); err != nil {
+	if err := clipboard.CopyClip(h.store, &clip); err != nil {
 		log.Printf("copy failed: %v", err)
 		return
 	}

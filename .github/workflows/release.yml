@@ -116,7 +116,9 @@ jobs:
           VERSION="${{ needs.version.outputs.version }}"
           echo "Building version $VERSION for ${{ matrix.name }}"
           go mod tidy
+          git diff --exit-code go.mod go.sum
           go vet ./...
+          go test ./...
           LDFLAGS="-s -w -X github.com/foisal/linboard/internal/config.AppVersion=${VERSION}"
           go build -ldflags "$LDFLAGS" -o linboard ./cmd/linboard
           file linboard

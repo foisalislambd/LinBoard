@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +12,27 @@ import (
 	"time"
 
 	"github.com/foisal/linboard/internal/config"
+	"github.com/foisal/linboard/internal/fsutil"
 )
+
+const (
+	// MaxTextBytes is the largest text clip stored. Bigger copies are skipped
+	// so a single paste cannot stall history rewrites.
+	MaxTextBytes = 1 << 20
+	// MaxImageBytes is the largest image stored on disk.
+	MaxImageBytes = 20 << 20
+)
+
+// ErrTooLarge is returned when a clipboard item exceeds MaxTextBytes or MaxImageBytes.
+var ErrTooLarge = errors.New("clipboard item exceeds the storage limit")
+
+// PNG header, used to reject non-image bytes from xclip.
+var pngMagic = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+
+// IsPNG reports whether data begins with a PNG signature.
+func IsPNG(data []byte) bool {
+	return len(data) >= len(pngMagic) && bytes.Equal(data[:len(pngMagic)], pngMagic)
+}
 
 type ContentType string
 
@@ -98,6 +120,9 @@ func (s *Store) AddText(content string) (*Clip, error) {
 	if strings.TrimSpace(content) == "" {
 		return nil, nil
 	}
+	if len(content) > MaxTextBytes {
+		return nil, ErrTooLarge
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,7 +160,7 @@ func (s *Store) AddText(content string) (*Clip, error) {
 		s.nextID = id
 		return nil, err
 	}
-	removeClipFiles(dropped)
+	s.removeClipFiles(dropped)
 	if kept := s.findByID(id); kept != nil {
 		cp := *kept
 		return &cp, nil
@@ -143,24 +168,93 @@ func (s *Store) AddText(content string) (*Clip, error) {
 	return &c, nil
 }
 
+// IsLatestText reports whether content is already the newest stored clip.
+// Callers use this at startup so an unchanged clipboard is not bumped to the top.
+func (s *Store) IsLatestText(content string) bool {
+	content = strings.TrimRight(content, "\x00")
+	if strings.TrimSpace(content) == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.isLatestHash(hashContent(content, detectType(content)))
+}
+
+// IsLatestImage reports whether data is already the newest stored clip.
+func (s *Store) IsLatestImage(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.isLatestHash(hashBytes(data, TypeImage))
+}
+
+func (s *fileStore) isLatestHash(hash string) bool {
+	var latest *Clip
+	for i := range s.clips {
+		c := &s.clips[i]
+		if latest == nil || c.CreatedAt.After(latest.CreatedAt) || (c.CreatedAt.Equal(latest.CreatedAt) && c.ID > latest.ID) {
+			latest = c
+		}
+	}
+	return latest != nil && latest.Hash == hash
+}
+
+// ReadImage returns the PNG bytes for a clip, refusing paths outside the image directory.
+func (s *Store) ReadImage(c *Clip) ([]byte, error) {
+	if c == nil || c.ImagePath == "" {
+		return nil, fmt.Errorf("clip has no image")
+	}
+	s.mu.Lock()
+	dir := s.imagesDir
+	s.mu.Unlock()
+	if !fsutil.WithinDir(dir, c.ImagePath) {
+		return nil, fmt.Errorf("image path is outside storage")
+	}
+	data, err := fsutil.ReadRegularFile(c.ImagePath, MaxImageBytes)
+	if err != nil {
+		return nil, err
+	}
+	if !IsPNG(data) {
+		return nil, fmt.Errorf("stored image is not a PNG")
+	}
+	return data, nil
+}
+
 func (s *Store) AddImage(data []byte) (*Clip, error) {
 	if len(data) == 0 {
 		return nil, nil
+	}
+	if len(data) > MaxImageBytes {
+		return nil, ErrTooLarge
+	}
+	if !IsPNG(data) {
+		return nil, fmt.Errorf("clipboard image is not a PNG")
+	}
+
+	hash := hashBytes(data, TypeImage)
+	s.mu.Lock()
+	imagesDir := s.imagesDir
+	s.mu.Unlock()
+
+	filename := hash[:16] + ".png"
+	path := filepath.Join(imagesDir, filename)
+	created := false
+	if _, err := os.Stat(path); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			return nil, err
+		}
+		created = true
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	hash := hashBytes(data, TypeImage)
 	now := time.Now()
-
-	filename := hash[:16] + ".png"
-	path := filepath.Join(s.imagesDir, filename)
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.WriteFile(path, data, 0o600); err != nil {
-			return nil, err
-		}
-	}
 
 	kb := (len(data) + 1023) / 1024
 	preview := fmt.Sprintf("[Image · %d KB]", kb)
@@ -191,9 +285,12 @@ func (s *Store) AddImage(data []byte) (*Clip, error) {
 	if err := s.saveLocked(); err != nil {
 		s.clips = snapshot
 		s.nextID = id
+		if created {
+			_ = os.Remove(path)
+		}
 		return nil, err
 	}
-	removeClipFiles(dropped)
+	s.removeClipFiles(dropped)
 	if kept := s.findByID(id); kept != nil {
 		cp := *kept
 		return &cp, nil
@@ -243,8 +340,13 @@ func (s *Store) TogglePin(id int64) error {
 	defer s.mu.Unlock()
 	for i := range s.clips {
 		if s.clips[i].ID == id {
-			s.clips[i].Pinned = !s.clips[i].Pinned
-			return s.saveLocked()
+			prev := s.clips[i].Pinned
+			s.clips[i].Pinned = !prev
+			if err := s.saveLocked(); err != nil {
+				s.clips[i].Pinned = prev
+				return err
+			}
+			return nil
 		}
 	}
 	return nil
@@ -258,12 +360,13 @@ func (s *Store) Delete(id int64) error {
 			continue
 		}
 		dropped := s.clips[i]
+		snapshot := cloneClips(s.clips)
 		s.clips = append(s.clips[:i], s.clips[i+1:]...)
 		if err := s.saveLocked(); err != nil {
-			s.clips = append(s.clips[:i], append([]Clip{dropped}, s.clips[i:]...)...)
+			s.clips = snapshot
 			return err
 		}
-		removeClipFiles([]Clip{dropped})
+		s.removeClipFiles([]Clip{dropped})
 		return nil
 	}
 	return nil
@@ -287,7 +390,7 @@ func (s *Store) ClearUnpinned() error {
 		s.clips = snapshot
 		return err
 	}
-	removeClipFiles(dropped)
+	s.removeClipFiles(dropped)
 	return nil
 }
 

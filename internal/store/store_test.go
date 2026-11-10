@@ -1,6 +1,8 @@
 package store
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,12 +11,21 @@ import (
 	"time"
 )
 
-func testStore(t *testing.T, max int) *Store {
+func isolateEnv(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	// config.DataDir uses os.UserHomeDir — HOME on Unix, USERPROFILE on Windows.
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg-config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(dir, "xdg-data"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "xdg-state"))
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(dir, "xdg-runtime"))
+	return dir
+}
+
+func testStore(t *testing.T, max int) *Store {
+	t.Helper()
+	isolateEnv(t)
 
 	s, err := Open(max)
 	if err != nil {
@@ -82,9 +93,7 @@ func TestPinnedSurvivesPrune(t *testing.T) {
 }
 
 func TestPersistReload(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
+	isolateEnv(t)
 
 	s1, err := Open(50)
 	if err != nil {
@@ -99,14 +108,14 @@ func TestPersistReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 
 	clips, err := s2.List("", 10)
 	if err != nil || len(clips) != 1 || clips[0].Content != "persist me" {
 		t.Fatalf("reload failed: %v %+v", err, clips)
 	}
-	if s2.fileStore.nextID < 1 {
-		t.Fatalf("nextID not restored: %d", s2.fileStore.nextID)
+	if s2.nextID < 1 {
+		t.Fatalf("nextID not restored: %d", s2.nextID)
 	}
 
 	path, _ := DataFilePath()
@@ -135,9 +144,7 @@ func TestPreviewTruncatesUTF8(t *testing.T) {
 }
 
 func TestCorruptJSONRecovered(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
+	isolateEnv(t)
 
 	s1, err := Open(50)
 	if err != nil {
@@ -156,7 +163,7 @@ func TestCorruptJSONRecovered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("corrupt json should not prevent startup: %v", err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 	n, _ := s2.Count()
 	if n != 0 {
 		t.Fatalf("expected empty history after corrupt recover, got %d", n)
@@ -167,9 +174,7 @@ func TestCorruptJSONRecovered(t *testing.T) {
 }
 
 func TestPruneOnOpenHonorsMax(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("USERPROFILE", dir)
+	isolateEnv(t)
 
 	s1, err := Open(50)
 	if err != nil {
@@ -186,9 +191,138 @@ func TestPruneOnOpenHonorsMax(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 	n, _ := s2.Count()
 	if n != 3 {
 		t.Fatalf("open prune kept %d, want 3", n)
+	}
+}
+
+func TestSearchClearAndDelete(t *testing.T) {
+	s := testStore(t, 20)
+	pinned, err := s.AddText("Keep Me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TogglePin(pinned.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddText("other value"); err != nil {
+		t.Fatal(err)
+	}
+	found, err := s.List("KEEP", 10)
+	if err != nil || len(found) != 1 || found[0].ID != pinned.ID {
+		t.Fatalf("search: %+v %v", found, err)
+	}
+	if err := s.ClearUnpinned(); err != nil {
+		t.Fatal(err)
+	}
+	n, _ := s.Count()
+	if n != 1 {
+		t.Fatalf("clear kept %d", n)
+	}
+	if err := s.Delete(pinned.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ = s.Count(); n != 0 {
+		t.Fatalf("delete left %d", n)
+	}
+	if err := s.Delete(pinned.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRejectsOversizedTextAndImage(t *testing.T) {
+	s := testStore(t, 10)
+	huge := strings.Repeat("a", MaxTextBytes+1)
+	if _, err := s.AddText(huge); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("text limit: %v", err)
+	}
+	img := append([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, make([]byte, MaxImageBytes)...)
+	if _, err := s.AddImage(img); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("image limit: %v", err)
+	}
+	if _, err := s.AddImage([]byte("not a png")); err == nil {
+		t.Fatal("expected non-png rejection")
+	}
+}
+
+func TestImageRoundTripAndUnsafePath(t *testing.T) {
+	dir := isolateEnv(t)
+	s, err := Open(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	png := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 1, 2, 3, 4}
+	clip, err := s.AddImage(png)
+	if err != nil || clip == nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadImage(clip)
+	if err != nil || !bytes.Equal(got, png) {
+		t.Fatalf("read image: %v %d", err, len(got))
+	}
+	if !s.IsLatestImage(png) {
+		t.Fatal("expected latest image")
+	}
+	_ = s.Close()
+
+	sentinel := filepath.Join(dir, "do-not-delete")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path, err := DataFilePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"next_id":2,"clips":[{"id":1,"content_type":"image","image_path":"` + sentinel + `","preview":"[Image]","created_at":"2020-01-01T00:00:00Z","hash":"x"}]}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := Open(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s2.Close() }()
+	loaded, _ := s2.List("", 10)
+	if len(loaded) != 1 || loaded[0].ImagePath != "" {
+		t.Fatalf("unsafe path not cleared: %+v", loaded)
+	}
+	if err := s2.Delete(1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("sentinel removed: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("clips.json mode %o", info.Mode().Perm())
+	}
+}
+
+func TestStartupDoesNotBumpLatest(t *testing.T) {
+	s := testStore(t, 10)
+	first, err := s.AddText("same")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.IsLatestText("same") {
+		t.Fatal("expected latest")
+	}
+	if s.IsLatestText("other") {
+		t.Fatal("other should not be latest")
+	}
+	if _, err := s.AddText("second"); err != nil {
+		t.Fatal(err)
+	}
+	if s.IsLatestText("same") {
+		t.Fatal("same is no longer latest")
+	}
+	got, err := s.GetByID(first.ID)
+	if err != nil || got == nil || got.Content != "same" {
+		t.Fatal(got)
 	}
 }

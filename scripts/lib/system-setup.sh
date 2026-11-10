@@ -174,7 +174,7 @@ linboard_ensure_input_group() {
 
   linboard_ensure_uinput_udev_rule || true
 
-  if id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx input; then
+  if id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -Fxq input; then
     linboard_warn "input group set but /dev/uinput not writable — log out and back in"
     return 0
   fi
@@ -230,8 +230,8 @@ run() {
 if [[ -w /dev/uinput ]]; then
   run "$@"
 fi
-if getent group input 2>/dev/null | awk -F: '{print $4}' | tr ',' '\n' | grep -qx "$USER" \
-   && ! id -nG | tr ' ' '\n' | grep -qx input; then
+if getent group input 2>/dev/null | awk -F: '{print $4}' | tr ',' '\n' | grep -Fxq -e "$USER" \
+   && ! id -nG | tr ' ' '\n' | grep -Fxq input; then
   exec sg input -c "$(printf 'exec %q ' "$LB" "$@")"
 fi
 run "$@"
@@ -306,7 +306,7 @@ linboard_install_theme_icons() {
   local icons_root="$1"
   [[ -d "$icons_root/hicolor" ]] || return 0
 
-  local dest="$HOME/.local/share/icons"
+  local dest="${XDG_DATA_HOME:-$HOME/.local/share}/icons"
   mkdir -p "$dest/hicolor"
 
   linboard_log "Installing application icon..."

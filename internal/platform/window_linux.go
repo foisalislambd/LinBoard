@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	pasteTargetMu   sync.Mutex
-	pasteTargetID   string
+	pasteTargetMu    sync.Mutex
+	pasteTargetID    string
 	pasteTargetGnome string
 )
 

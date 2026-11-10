@@ -12,12 +12,16 @@ import (
 	"github.com/foisal/linboard/internal/hotkey"
 	"github.com/foisal/linboard/internal/install"
 	"github.com/foisal/linboard/internal/ipc"
+	"github.com/foisal/linboard/internal/logging"
 	"github.com/foisal/linboard/internal/singleinstance"
 )
 
 func main() {
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.SetPrefix("[LinBoard] ")
+	closeLog, logErr := logging.Init()
+	defer closeLog()
+	if logErr != nil {
+		log.Printf("file logging disabled: %v", logErr)
+	}
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {

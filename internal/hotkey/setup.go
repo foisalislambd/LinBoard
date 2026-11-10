@@ -88,7 +88,7 @@ func verifyGNOMEShortcut(r VerifyReport, exe string) VerifyReport {
 	bind, err := gsettingsGet(schema, "binding")
 	if err != nil {
 		r.Fail = append(r.Fail, "shortcut binding not set")
-	} else if strings.Trim(bind, "'") != "<Super>v" {
+	} else if unquoteGVariantString(bind) != "<Super>v" {
 		r.Warn = append(r.Warn, "binding is "+bind+" (want <Super>v)")
 	} else {
 		r.OK = append(r.OK, "binding: Super+V")
@@ -128,7 +128,7 @@ func verifyKDEShortcut(r VerifyReport, exe string) VerifyReport {
 		r.Fail = append(r.Fail, "khotkeysrc missing — Super+V may not be registered")
 		return r
 	}
-	if !strings.Contains(content, "linboard-toggle") {
+	if !strings.Contains(content, "Name=LinBoard") && !strings.Contains(content, "linboard-toggle") {
 		r.Fail = append(r.Fail, "LinBoard entry not found in khotkeysrc")
 		return r
 	}
@@ -156,10 +156,12 @@ func verifyCinnamonShortcut(r VerifyReport, exe string) VerifyReport {
 	path := "/org/cinnamon/desktop/keybindings/custom-keybindings/custom-linboard/"
 	fullSchema := listSchema + ".custom-keybinding:" + path
 
-	paths, err := gsettingsGetArray(listSchema, "custom-keybindings")
-	if err != nil || len(paths) == 0 {
-		paths, err = gsettingsGetArray(listSchema, "custom-list")
+	listKey, err := cinnamonBindingListKey()
+	if err != nil {
+		r.Fail = append(r.Fail, "Cinnamon keybinding list not found")
+		return r
 	}
+	paths, err := gsettingsGetArray(listSchema, listKey)
 	if err != nil || !containsPath(paths, path) {
 		r.Fail = append(r.Fail, "custom-linboard not in Cinnamon keybindings list")
 		return r
@@ -178,7 +180,7 @@ func verifyCinnamonShortcut(r VerifyReport, exe string) VerifyReport {
 	bind, err := gsettingsGet(fullSchema, "binding")
 	if err != nil {
 		r.Fail = append(r.Fail, "Cinnamon shortcut binding not set")
-	} else if strings.Trim(bind, "'") != "<Super>v" {
+	} else if unquoteGVariantString(bind) != "<Super>v" {
 		r.Warn = append(r.Warn, "binding is "+bind+" (want <Super>v)")
 	} else {
 		r.OK = append(r.OK, "binding: Super+V")

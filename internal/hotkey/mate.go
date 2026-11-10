@@ -3,15 +3,17 @@ package hotkey
 import (
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/foisal/linboard/internal/config"
 	"github.com/foisal/linboard/internal/platform"
 )
 
 const (
-	mateKeybindingSchema = "org.mate.control-center.keybinding"
-	mateBindingPath      = "/org/mate/desktop/keybindings/custom-linboard/"
+	mateListSchema  = "org.mate.desktop.keybindings"
+	mateListKey     = "custom-list"
+	mateEntryID     = "custom-linboard"
+	mateEntrySchema = "org.mate.desktop.keybindings.custom-keybinding"
+	mateEntryBase   = "/org/mate/desktop/keybindings/"
 )
 
 type mateBackend struct{}
@@ -30,8 +32,12 @@ func (b *mateBackend) start(_ func()) error {
 
 func (b *mateBackend) stop() {}
 
+func mateEntryPath() string {
+	return mateEntryBase + mateEntryID + "/"
+}
+
 func mateBindingFullSchema() string {
-	return mateKeybindingSchema + ":" + mateBindingPath
+	return mateEntrySchema + ":" + mateEntryPath()
 }
 
 func setupMATEHotkey(exe string) error {
@@ -42,14 +48,25 @@ func setupMATEHotkey(exe string) error {
 		return fmt.Errorf("gsettings not found")
 	}
 
+	ids, err := gsettingsGetArray(mateListSchema, mateListKey)
+	if err != nil {
+		return err
+	}
+	if !containsPath(ids, mateEntryID) {
+		ids = append(ids, mateEntryID)
+		if err := gsettingsSetArray(mateListSchema, mateListKey, ids); err != nil {
+			return err
+		}
+	}
+
 	schema := mateBindingFullSchema()
-	if err := gsettingsSet(schema, "name", "LinBoard"); err != nil {
+	if err := gsettingsSetString(schema, "name", "LinBoard"); err != nil {
 		return err
 	}
-	if err := gsettingsSet(schema, "action", exe+" toggle"); err != nil {
+	if err := gsettingsSetString(schema, "action", exe+" toggle"); err != nil {
 		return err
 	}
-	return gsettingsSet(schema, "binding", "<Super>v")
+	return gsettingsSetString(schema, "binding", "<Super>v")
 }
 
 func verifyMATEShortcut(r VerifyReport, exe string) VerifyReport {
@@ -58,6 +75,13 @@ func verifyMATEShortcut(r VerifyReport, exe string) VerifyReport {
 		r.Fail = append(r.Fail, "gsettings not found")
 		return r
 	}
+	ids, err := gsettingsGetArray(mateListSchema, mateListKey)
+	if err != nil || !containsPath(ids, mateEntryID) {
+		r.Fail = append(r.Fail, "custom-linboard not in MATE custom-list")
+		return r
+	}
+	r.OK = append(r.OK, "registered in MATE custom-list")
+
 	schema := mateBindingFullSchema()
 	action, err := gsettingsCommand(schema, "action")
 	if err != nil {
@@ -72,7 +96,7 @@ func verifyMATEShortcut(r VerifyReport, exe string) VerifyReport {
 	bind, err := gsettingsGet(schema, "binding")
 	if err != nil {
 		r.Fail = append(r.Fail, "MATE shortcut binding not set")
-	} else if strings.Trim(bind, "'") != "<Super>v" {
+	} else if unquoteGVariantString(bind) != "<Super>v" {
 		r.Warn = append(r.Warn, "binding is "+bind+" (want <Super>v)")
 	} else {
 		r.OK = append(r.OK, "binding: Super+V")

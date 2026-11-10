@@ -16,7 +16,7 @@ func mediaKeysRunning() bool {
 	if err != nil {
 		return false
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	var hasOwner bool
 	err = conn.BusObject().Call("org.freedesktop.DBus.NameHasOwner", 0, mediaKeysBus).Store(&hasOwner)
 	return err == nil && hasOwner
@@ -40,6 +40,9 @@ func ensureGNOMEMediaKeys() error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	// Detach so an early exit cannot leave a zombie, and so LinBoard's
+	// shutdown does not wait on the session daemon.
+	_ = cmd.Process.Release()
 	for i := 0; i < 30; i++ {
 		if mediaKeysRunning() {
 			log.Printf("hotkey: started %s", mediaKeysBus)

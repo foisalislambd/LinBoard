@@ -15,6 +15,9 @@ Commands:
   linboard doctor       Check shortcut + paste
   linboard install-shortcut   Re-register Super+V
 
+History is stored in ~/.local/share/linboard (or $XDG_DATA_HOME/linboard).
+Settings: ~/.config/linboard/config.json
+
 Works on: GNOME, KDE Plasma, XFCE, Cinnamon, MATE — X11 and Wayland.
 
 Support: https://github.com/Foisalislambd/LinBoard

@@ -33,7 +33,7 @@ esac
 
 if [ "$LINBOARD_RELEASE" = "latest" ]; then
   API="https://api.github.com/repos/${REPO}/releases/latest"
-  VERSION_TAG="$(curl -fsSL "$API" | grep -oP '"tag_name"\s*:\s*"\K[^"]+' | head -1)"
+  VERSION_TAG="$(curl -fsSL "$API" | sed -n 's/^[[:space:]]*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
 else
   VERSION_TAG="$LINBOARD_RELEASE"
   case "$VERSION_TAG" in
@@ -53,6 +53,12 @@ URL="https://github.com/${REPO}/releases/download/${VERSION_TAG}/${TARBALL}"
 
 linboard_log "LinBoard ${VERSION_TAG} (${ASSET})"
 linboard_download "$URL" "$TMP/$TARBALL" "$TARBALL"
+linboard_download "${URL}.sha256" "$TMP/$TARBALL.sha256" "$TARBALL.sha256"
+if ! (cd "$TMP" && sha256sum -c "$TARBALL.sha256"); then
+  echo "Checksum verification failed for $TARBALL" >&2
+  exit 1
+fi
+linboard_log "Checksum OK"
 tar -xzf "$TMP/$TARBALL" -C "$TMP"
 
 # Bundle system-setup for install.sh

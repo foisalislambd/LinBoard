@@ -23,11 +23,27 @@ jobs:
             libgl1-mesa-dev libxxf86vm-dev libayatana-appindicator3-dev \
             libdbus-1-dev
 
-      - name: Build and verify
+      - name: Verify modules
         run: |
           go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.6.2
+          args: ./...
+
+      - name: Test
+        run: |
           go vet ./...
           go test ./...
+          go test -race ./internal/atomicfile ./internal/fsutil ./internal/config ./internal/store \
+            ./internal/clipboard ./internal/hotkey ./internal/ipc ./internal/platform \
+            ./internal/singleinstance ./internal/logging ./internal/install
+
+      - name: Build
+        run: |
           go build -ldflags "-s -w" -o linboard ./cmd/linboard
           ./linboard version
           ./linboard help | head -1

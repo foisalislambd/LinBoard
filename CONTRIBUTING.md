@@ -22,10 +22,22 @@ sg input -c ./linboard   # if group not active in current session
 
 - Go 1.26+
 - Match existing package layout under `internal/`
+- Config, history, logs, and the IPC socket follow the XDG base directories (`internal/config`)
 - Test on **GNOME Wayland** and at least one of: KDE, XFCE, or X11
 - Paste flow: `platform.CapturePasteTarget` → `CopyClip` → `Hide` → `PasteToTarget`
 - Keep hotkey logic in `internal/hotkey/` — one file per desktop environment
 - Use `fyne.DoFromGoroutine` for all UI updates from background threads
+- Do not log clipboard contents
+
+## Checks
+
+```bash
+make vet
+make test
+make lint   # golangci-lint v2.6.2 — go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.6.2
+```
+
+`make test-race` race-tests the packages that do not need a display.
 
 ## Pull requests
 
@@ -38,7 +50,7 @@ sg input -c ./linboard   # if group not active in current session
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `ci.yml` | Pull requests | Build + vet + test |
+| `ci.yml` | Pull requests | `go mod tidy` check, vet, golangci-lint, test, race, build |
 | `release.yml` | Push to `main` | Build packages → tag → GitHub Release |
 
 Pushing to `main` auto-bumps the patch version and publishes a release **after** a successful build (tag is created last).

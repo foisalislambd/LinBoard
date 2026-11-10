@@ -55,9 +55,8 @@ type uinputKeyboard struct {
 }
 
 var (
-	uinputOnce sync.Once
-	uinputKB   *uinputKeyboard
-	uinputErr  error
+	uinputMu sync.Mutex
+	uinputKB *uinputKeyboard
 )
 
 func uinputReady() bool {
@@ -73,11 +72,29 @@ func pasteViaUinput() error {
 	return kb.sendCtrlV()
 }
 
+// CloseUinput destroys the virtual keyboard. Safe to call more than once.
+// A failed open is not cached, so a later paste retries after the user fixes permissions.
+func CloseUinput() {
+	uinputMu.Lock()
+	defer uinputMu.Unlock()
+	if uinputKB != nil {
+		uinputKB.close()
+		uinputKB = nil
+	}
+}
+
 func getUinputKeyboard() (*uinputKeyboard, error) {
-	uinputOnce.Do(func() {
-		uinputKB, uinputErr = openUinputKeyboard()
-	})
-	return uinputKB, uinputErr
+	uinputMu.Lock()
+	defer uinputMu.Unlock()
+	if uinputKB != nil && uinputKB.fd >= 0 {
+		return uinputKB, nil
+	}
+	kb, err := openUinputKeyboard()
+	if err != nil {
+		return nil, err
+	}
+	uinputKB = kb
+	return kb, nil
 }
 
 func openUinputKeyboard() (*uinputKeyboard, error) {
@@ -130,12 +147,28 @@ func (kb *uinputKeyboard) configure() error {
 	if err := ioctlSetInt(kb.fd, uiDevCreate, 0); err != nil {
 		return fmt.Errorf("uinput UI_DEV_CREATE: %w", err)
 	}
+	// The kernel needs a moment before the new device accepts events.
+	time.Sleep(50 * time.Millisecond)
 	return nil
+}
+
+func (kb *uinputKeyboard) close() {
+	kb.mu.Lock()
+	defer kb.mu.Unlock()
+	if kb.fd < 0 {
+		return
+	}
+	_ = ioctlSetInt(kb.fd, uiDevDestroy, 0)
+	_ = syscall.Close(kb.fd)
+	kb.fd = -1
 }
 
 func (kb *uinputKeyboard) sendCtrlV() error {
 	kb.mu.Lock()
 	defer kb.mu.Unlock()
+	if kb.fd < 0 {
+		return errUinputUnavailable
+	}
 	for _, step := range []struct {
 		code  uint16
 		value int32
