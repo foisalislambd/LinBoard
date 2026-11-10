@@ -115,7 +115,7 @@ cmd_vet() {
 cmd_lint() {
   if ! command -v golangci-lint >/dev/null 2>&1; then
     echo "golangci-lint is not installed."
-    echo "Install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.6.2"
+    echo "Install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0"
     exit 1
   fi
   golangci-lint run ./...

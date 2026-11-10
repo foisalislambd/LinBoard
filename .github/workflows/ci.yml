@@ -31,7 +31,9 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.6.2
+          # Release binaries before v2.15.0 were built with Go 1.25 and
+          # refuse go.mod's 1.26.4 language version. v2.15.0 is built with Go 1.27.
+          version: v2.15.0
           args: ./...
 
       - name: Test

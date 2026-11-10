@@ -34,7 +34,7 @@ sg input -c ./linboard   # if group not active in current session
 ```bash
 make vet
 make test
-make lint   # golangci-lint v2.6.2 — go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.6.2
+make lint   # golangci-lint v2.15.0 — go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 ```
 
 `make test-race` race-tests the packages that do not need a display.
