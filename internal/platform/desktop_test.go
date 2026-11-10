@@ -4,6 +4,7 @@ import "testing"
 
 func TestCurrentDesktop(t *testing.T) {
 	t.Setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
+	t.Setenv("XDG_SESSION_DESKTOP", "")
 	t.Setenv("DESKTOP_SESSION", "ubuntu")
 	if CurrentDesktop() != DesktopGNOME || DesktopName() != "GNOME" {
 		t.Fatalf("got %v %s", CurrentDesktop(), DesktopName())
@@ -27,8 +28,66 @@ func TestCurrentDesktop(t *testing.T) {
 		t.Fatal(CurrentDesktop())
 	}
 	t.Setenv("XDG_CURRENT_DESKTOP", "Hyprland")
+	t.Setenv("XDG_SESSION_DESKTOP", "")
 	t.Setenv("DESKTOP_SESSION", "hyprland")
 	if CurrentDesktop() != DesktopOther {
+		t.Fatal(CurrentDesktop())
+	}
+}
+
+func TestDesktopFallbackWhenEnvUnset(t *testing.T) {
+	t.Setenv("XDG_CURRENT_DESKTOP", "")
+	t.Setenv("XDG_SESSION_DESKTOP", "")
+	t.Setenv("DESKTOP_SESSION", "")
+
+	restore := SetRunningProcessesForTest(func() []string {
+		return []string{"xfce4-panel", "xfconfd", "xfwm4"}
+	})
+	defer restore()
+	if CurrentDesktop() != DesktopXFCE || DesktopName() != "XFCE" {
+		t.Fatalf("xfce processes: %v %s", CurrentDesktop(), DesktopName())
+	}
+
+	restore()
+	restore = SetRunningProcessesForTest(func() []string { return []string{"gnome-shell"} })
+	defer restore()
+	if CurrentDesktop() != DesktopGNOME {
+		t.Fatal(CurrentDesktop())
+	}
+
+	restore()
+	restore = SetRunningProcessesForTest(func() []string { return []string{"plasmashell"} })
+	defer restore()
+	if CurrentDesktop() != DesktopKDE {
+		t.Fatal(CurrentDesktop())
+	}
+
+	restore()
+	restore = SetRunningProcessesForTest(func() []string { return []string{"cinnamon-sessio"} })
+	defer restore()
+	if CurrentDesktop() != DesktopCinnamon {
+		t.Fatal(CurrentDesktop())
+	}
+
+	restore()
+	restore = SetRunningProcessesForTest(func() []string { return []string{"mate-panel"} })
+	defer restore()
+	if CurrentDesktop() != DesktopMATE {
+		t.Fatal(CurrentDesktop())
+	}
+
+	// An explicit unknown desktop is not overridden by whatever happens to be running.
+	t.Setenv("XDG_CURRENT_DESKTOP", "Hyprland")
+	if CurrentDesktop() != DesktopOther {
+		t.Fatal(CurrentDesktop())
+	}
+}
+
+func TestSessionDesktopEnv(t *testing.T) {
+	t.Setenv("XDG_CURRENT_DESKTOP", "")
+	t.Setenv("DESKTOP_SESSION", "")
+	t.Setenv("XDG_SESSION_DESKTOP", "xfce")
+	if CurrentDesktop() != DesktopXFCE {
 		t.Fatal(CurrentDesktop())
 	}
 }

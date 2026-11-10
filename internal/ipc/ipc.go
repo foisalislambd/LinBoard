@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -154,10 +155,12 @@ func (s *Server) handle(conn net.Conn) {
 	}
 	switch strings.TrimSpace(strings.ToLower(line)) {
 	case "toggle":
-		_, _ = io.WriteString(conn, "ok\n")
+		// Run the handler before acking so a client only hears success after
+		// the window toggle has been handed to the UI thread.
 		if s.onToggle != nil {
 			s.onToggle()
 		}
+		_, _ = io.WriteString(conn, "ok\n")
 	default:
 		_, _ = io.WriteString(conn, "err\n")
 	}
@@ -171,7 +174,17 @@ func (s *Server) Close() {
 		_ = s.ln.Close()
 	}
 	s.wg.Wait()
-	s.connWg.Wait()
+	done := make(chan struct{})
+	go func() {
+		s.connWg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		// A handler blocked in the UI must not keep the process alive.
+		log.Printf("ipc: timed out waiting for a connection to finish")
+	}
 	if s.path != "" {
 		_ = os.Remove(s.path)
 	}

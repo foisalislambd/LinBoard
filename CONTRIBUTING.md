@@ -26,7 +26,7 @@ sg input -c ./linboard   # if group not active in current session
 - Test on **GNOME Wayland** and at least one of: KDE, XFCE, or X11
 - Paste flow: `platform.CapturePasteTarget` → `CopyClip` → `Hide` → `PasteToTarget`
 - Keep hotkey logic in `internal/hotkey/` — one file per desktop environment
-- Use `fyne.DoFromGoroutine` for all UI updates from background threads
+- UI calls from background goroutines go through `fyne.Do` / `fyne.DoAndWait`. The app opts into that model with `Migrations["fyneDo"]`. Do not call `fyne.DoAndWait` from the UI goroutine.
 - Do not log clipboard contents
 
 ## Checks

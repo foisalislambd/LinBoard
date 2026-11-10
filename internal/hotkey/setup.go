@@ -8,6 +8,7 @@ import (
 	"github.com/foisal/linboard/internal/clipboard"
 	"github.com/foisal/linboard/internal/config"
 	"github.com/foisal/linboard/internal/platform"
+	"github.com/foisal/linboard/internal/tray"
 )
 
 // SetupAt registers Super+V for exe (idempotent). Call from install and app start.
@@ -51,8 +52,7 @@ func Verify(exe string) (r VerifyReport) {
 	case platform.DesktopCinnamon:
 		r = verifyCinnamonShortcut(r, exe)
 	default:
-		r.OK = append(r.OK, "desktop: "+platform.DesktopName())
-		r.Warn = append(r.Warn, "automatic shortcut verify not available for this desktop — test Super+V manually")
+		r.Fail = append(r.Fail, "Super+V is not registered (desktop environment was not detected)")
 	}
 	return
 }
@@ -189,6 +189,13 @@ func verifyCinnamonShortcut(r VerifyReport, exe string) VerifyReport {
 }
 
 func appendPasteVerify(r *VerifyReport) {
+	okLine, warnLine := tray.Probe()
+	if okLine != "" {
+		r.OK = append(r.OK, okLine)
+	}
+	if warnLine != "" {
+		r.Warn = append(r.Warn, warnLine)
+	}
 	if clipboard.PasteReady() {
 		r.OK = append(r.OK, "auto-paste ready ("+clipboard.PasteToolName()+")")
 		return

@@ -70,3 +70,22 @@ func TestToggleAndSocketMode(t *testing.T) {
 		t.Fatalf("socket left behind: %v", err)
 	}
 }
+
+func TestStartReplacesStaleSocket(t *testing.T) {
+	isolate(t)
+	path, err := SocketPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := StartServer(func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+	if err := Toggle(); err != nil {
+		t.Fatal(err)
+	}
+}

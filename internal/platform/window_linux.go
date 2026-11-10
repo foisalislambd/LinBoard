@@ -3,7 +3,9 @@
 package platform
 
 import (
+	"context"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -15,6 +17,26 @@ var (
 	pasteTargetID    string
 	pasteTargetGnome string
 )
+
+// RaiseWindow maps and activates a window by title. xfwm4 often leaves a GLFW
+// window unmapped after the first Show; an explicit map makes it visible to
+// the window manager.
+func RaiseWindow(title string) {
+	title = strings.TrimSpace(title)
+	if title == "" || os.Getenv("DISPLAY") == "" {
+		return
+	}
+	if _, err := exec.LookPath("xdotool"); err != nil {
+		return
+	}
+	time.Sleep(80 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "xdotool", "search", "--name", title, "windowmap", "windowactivate")
+	if err := cmd.Run(); err != nil {
+		log.Printf("raise window %q: %v", title, err)
+	}
+}
 
 // HasPasteTarget reports whether a foreground window was captured before the popup opened.
 func HasPasteTarget() bool {
