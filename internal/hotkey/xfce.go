@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/foisal/linboard/internal/atomicfile"
 	"github.com/foisal/linboard/internal/config"
 	"github.com/foisal/linboard/internal/platform"
 )
@@ -68,12 +69,19 @@ func setupXFCEHotkey(exe string) error {
 	return writeXFCEShortcutXML(exe)
 }
 
+func xfceShortcutsPath() (string, error) {
+	base, err := config.ConfigHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "xfce4", "xfconf", "xfce-perchannel-xml", "xfce4-keyboard-shortcuts.xml"), nil
+}
+
 func writeXFCEShortcutXML(exe string) error {
-	home, err := os.UserHomeDir()
+	path, err := xfceShortcutsPath()
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(home, ".config", "xfce4", "xfconf", "xfce-perchannel-xml", "xfce4-keyboard-shortcuts.xml")
 
 	ch := xfceChannel{Name: "xfce4-keyboard-shortcuts", Version: "1.0"}
 	if data, err := os.ReadFile(path); err == nil {
@@ -110,7 +118,7 @@ func writeXFCEShortcutXML(exe string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, append([]byte(xml.Header), out...), 0o644)
+	return atomicfile.Write(path, append([]byte(xml.Header), out...), 0o644)
 }
 
 func findProperty(props *[]xfceProperty, name string) *xfceProperty {
@@ -162,12 +170,11 @@ func verifyXFCEShortcut(r VerifyReport, exe string) VerifyReport {
 		return r
 	}
 
-	home, err := os.UserHomeDir()
+	path, err := xfceShortcutsPath()
 	if err != nil {
 		r.Warn = append(r.Warn, "could not verify XFCE shortcut (no home dir)")
 		return r
 	}
-	path := filepath.Join(home, ".config", "xfce4", "xfconf", "xfce-perchannel-xml", "xfce4-keyboard-shortcuts.xml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		r.Fail = append(r.Fail, "XFCE keyboard shortcuts file missing")

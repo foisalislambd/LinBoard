@@ -1,6 +1,7 @@
 package clipboard
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -69,27 +70,58 @@ func WriteImage(data []byte) error {
 	return fmt.Errorf("clipboard image write failed (install xclip)")
 }
 
-func readText() (string, error) {
-	readers := textReaders()
-	for i, r := range readers {
-		text, err := r()
-		if err != nil {
-			continue
-		}
-		// On Wayland, trust Fyne/GLFW for empty clipboard — do not fall through to stale X11 data.
-		if i == 0 && fyneAvailable() && platform.UsePortalHotkey() {
-			return text, nil
-		}
-		if text != "" {
-			return text, nil
-		}
-	}
-	return "", nil
+// backendRead is one clipboard backend's result.
+// authoritative means an empty string is the real clipboard (do not fall through).
+type backendRead struct {
+	text          string
+	err           error
+	authoritative bool
 }
 
-func readImage() ([]byte, error) {
-	for _, r := range imageReaders() {
-		if data, err := r(); err == nil && len(data) > 0 {
+// chooseClipboardText picks a clipboard string from backends in order.
+// On Wayland the Fyne read is authoritative, including when it is empty, so a
+// stale X11/XWayland selection is not treated as the current clipboard.
+func chooseClipboardText(reads []backendRead) string {
+	for i, r := range reads {
+		if r.err != nil {
+			continue
+		}
+		if i == 0 && r.authoritative {
+			return r.text
+		}
+		if r.text != "" {
+			return r.text
+		}
+	}
+	return ""
+}
+
+func readTextContext(ctx context.Context) (string, error) {
+	var reads []backendRead
+	if fyneAvailable() {
+		text, err := readTextFyne()
+		reads = append(reads, backendRead{
+			text:          text,
+			err:           err,
+			authoritative: platform.UsePortalHotkey(),
+		})
+	}
+	if !platform.UsePortalHotkey() || haveCommand("xclip") {
+		if haveCommand("xclip") {
+			text, err := readTextXClip(ctx)
+			reads = append(reads, backendRead{text: text, err: err})
+		}
+		if haveCommand("xsel") {
+			text, err := readTextXSel(ctx)
+			reads = append(reads, backendRead{text: text, err: err})
+		}
+	}
+	return chooseClipboardText(reads), nil
+}
+
+func readImageContext(ctx context.Context) ([]byte, error) {
+	if haveCommand("xclip") {
+		if data, err := readImageXClip(ctx); err == nil && len(data) > 0 {
 			return data, nil
 		}
 	}
@@ -112,24 +144,6 @@ func imageWriters() []func([]byte) error {
 	// Images use X11 tools (XWayland bridge on GNOME Wayland). Pure Fyne API is text-only.
 	if haveCommand("xclip") {
 		return []func([]byte) error{writeImageXClip}
-	}
-	return nil
-}
-
-func textReaders() []func() (string, error) {
-	readers := []func() (string, error){}
-	if fyneAvailable() {
-		readers = append(readers, readTextFyne)
-	}
-	if !platform.UsePortalHotkey() || haveCommand("xclip") {
-		readers = append(readers, readTextXClip, readTextXSel)
-	}
-	return readers
-}
-
-func imageReaders() []func() ([]byte, error) {
-	if haveCommand("xclip") {
-		return []func() ([]byte, error){readImageXClip}
 	}
 	return nil
 }

@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/foisal/linboard/internal/assets"
 	"github.com/foisal/linboard/internal/clipboard"
+	"github.com/foisal/linboard/internal/config"
 	"github.com/foisal/linboard/internal/hotkey"
 )
 
@@ -17,7 +19,11 @@ func Run() error {
 		return err
 	}
 
-	binDir := filepath.Join(os.Getenv("HOME"), ".local", "bin")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	binDir := filepath.Join(home, ".local", "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		return err
 	}
@@ -26,16 +32,14 @@ func Run() error {
 		if err := copyFile(exe, dest); err != nil {
 			return fmt.Errorf("install binary: %w", err)
 		}
-		_ = os.Chmod(dest, 0o755)
 	}
 	launcher := filepath.Join(binDir, "linboard-start")
 	if err := writeLauncher(launcher, dest); err != nil {
 		return fmt.Errorf("install launcher: %w", err)
 	}
 
-	share := filepath.Join(os.Getenv("HOME"), ".local", "share")
-	desktopDir := filepath.Join(share, "applications")
-	if err := os.MkdirAll(desktopDir, 0o755); err != nil {
+	desktopDir, err := config.ApplicationsDir()
+	if err != nil {
 		return err
 	}
 	desktopBody := desktopEntry(launcher, false)
@@ -43,8 +47,8 @@ func Run() error {
 		return err
 	}
 
-	autostartDir := filepath.Join(os.Getenv("HOME"), ".config", "autostart")
-	if err := os.MkdirAll(autostartDir, 0o755); err != nil {
+	autostartDir, err := config.AutostartDir()
+	if err != nil {
 		return err
 	}
 	autostartBody := desktopEntry(launcher, true)
@@ -95,7 +99,26 @@ Icon=linboard
 Terminal=false
 Categories=Utility;
 StartupNotify=false
-%s`, execPath, extra)
+%s`, desktopExec(execPath), extra)
+}
+
+// desktopExec quotes a path per the desktop entry spec when it contains
+// characters that the Exec key would otherwise split or expand.
+func desktopExec(path string) string {
+	if !strings.ContainsAny(path, " \t\"\\$`") {
+		return path
+	}
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range path {
+		switch r {
+		case '\\', '"', '`', '$':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 func copyFile(src, dst string) error {
@@ -103,7 +126,17 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, in, 0o755)
+	// Write to a temp file and rename so a running binary is not truncated
+	// in place (that returns ETXTBSY on Linux).
+	tmp := dst + ".new"
+	if err := os.WriteFile(tmp, in, 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func writeLauncher(path, linboardExe string) error {
@@ -124,8 +157,8 @@ run() {
 if [[ -w /dev/uinput ]]; then
   run "$@"
 fi
-if getent group input 2>/dev/null | awk -F: '{print $4}' | tr ',' '\n' | grep -qx "$USER" \
-   && ! id -nG | tr ' ' '\n' | grep -qx input; then
+if getent group input 2>/dev/null | awk -F: '{print $4}' | tr ',' '\n' | grep -Fxq -e "$USER" \
+   && ! id -nG | tr ' ' '\n' | grep -Fxq input; then
   exec sg input -c "$(printf 'exec %%q ' "$LB" "$@")"
 fi
 run "$@"
@@ -135,4 +168,3 @@ run "$@"
 	}
 	return nil
 }
-

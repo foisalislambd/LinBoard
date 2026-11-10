@@ -120,10 +120,13 @@ To restart manually after an upgrade: `linboard-start` (runs in the background; 
 ```bash
 pkill linboard 2>/dev/null || true
 rm -f ~/.local/bin/linboard ~/.local/bin/linboard-start
-rm -f ~/.local/share/applications/linboard.desktop
-rm -f ~/.config/autostart/linboard.desktop
-rm -rf ~/.config/linboard   # optional — removes history
-sudo rm -f /etc/udev/rules.d/99-linboard-uinput.rules  # optional
+rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/applications/linboard.desktop"
+rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/linboard.desktop"
+rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/linboard"          # settings and Super+V launcher
+rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/linboard"       # history and images
+rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/linboard"      # logs
+rm -rf ~/.config/linboard/data                               # legacy history, if still present
+sudo rm -f /etc/udev/rules.d/99-linboard-uinput.rules        # optional
 ```
 
 Remove the **LinBoard** entry from Settings → Keyboard if it remains.
@@ -132,7 +135,7 @@ Remove the **LinBoard** entry from Settings → Keyboard if it remains.
 
 ## Settings
 
-Edit `~/.config/linboard/config.json`:
+Edit `$XDG_CONFIG_HOME/linboard/config.json` (usually `~/.config/linboard/config.json`):
 
 ```json
 {
@@ -143,11 +146,47 @@ Edit `~/.config/linboard/config.json`:
 }
 ```
 
+`max_history` is clamped to 1–5000. `theme` is `system`, `light`, or `dark`. Text clips larger than 1 MiB and images larger than 20 MiB are not stored. Images must be PNG (LinBoard asks `xclip` to convert the clipboard to PNG).
+
 | File | What's stored |
 |------|-----------------|
-| `~/.config/linboard/config.json` | Your settings |
-| `~/.config/linboard/data/clips.json` | Clipboard history |
-| `~/.config/linboard/data/images/` | Copied images |
+| `$XDG_CONFIG_HOME/linboard/config.json` | Settings (mode `0600`) |
+| `$XDG_DATA_HOME/linboard/clips.json` | Clipboard history (mode `0600`) |
+| `$XDG_DATA_HOME/linboard/images/` | Copied images (directory mode `0700`) |
+| `$XDG_STATE_HOME/linboard/linboard.log` | Logs. Clipboard contents are not written here |
+| `$XDG_RUNTIME_DIR/linboard/linboard.sock` | Local control socket for Super+V (mode `0600`) |
+
+When the XDG variables are unset, those paths are `~/.config`, `~/.local/share`, `~/.local/state`, and `/run/user/$UID`.
+
+History written by older releases under `~/.config/linboard/data` is moved to the data directory the first time this version starts. If a history file already exists in the new location, the old copy is left in place.
+
+---
+
+## Build from source
+
+LinBoard needs Go 1.27+ and cgo (Fyne). On Debian/Ubuntu:
+
+```bash
+sudo apt-get install -y gcc pkg-config \
+  libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev \
+  libgl1-mesa-dev libxxf86vm-dev libayatana-appindicator3-dev libdbus-1-dev
+```
+
+`./scripts/setup.sh` installs those packages and Go on Debian/Ubuntu. Other distros should install the same libraries with their package manager, then:
+
+```bash
+make test
+make vet
+make lint    # needs golangci-lint, see CONTRIBUTING.md
+make build
+./linboard version
+```
+
+`make build` stamps `linboard version` from [`VERSION.md`](VERSION.md) (a single semver, such as `1.0.13`). A bare `go build` reports `dev`.
+
+### Cutting a release
+
+Releases are not created on every push. Edit `VERSION.md` to a semver **strictly greater** than the latest GitHub release tag, then merge to `main`. The release workflow builds the Linux archives, creates tag `v` + that number, and publishes the GitHub release with checksums. If the number is equal to or lower than the latest release, the workflow succeeds and does not publish anything. The first release, when the repository has no semver tag yet, uses `VERSION.md` as-is.
 
 ---
 

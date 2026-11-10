@@ -2,7 +2,7 @@
 # LinBoard — system setup for Ubuntu/Debian
 set -euo pipefail
 
-GO_VERSION="1.26.4"
+GO_VERSION="1.27.3"
 case "$(uname -m)" in
   x86_64)  GO_ARCH="linux-amd64" ;;
   aarch64) GO_ARCH="linux-arm64" ;;
@@ -66,7 +66,8 @@ echo "==> Building LinBoard..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 go mod tidy
-go build -o linboard ./cmd/linboard
+APP_VERSION="$(tr -d '[:space:]' < VERSION.md)"
+go build -ldflags "-s -w -X github.com/foisal/linboard/internal/config.AppVersion=${APP_VERSION}" -o linboard ./cmd/linboard
 
 echo ""
 echo "Done! Run: ./linboard"

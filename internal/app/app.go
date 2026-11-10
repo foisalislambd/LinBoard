@@ -75,9 +75,9 @@ func New() (*App, error) {
 
 	switch cfg.Theme {
 	case "dark":
-		a.fyneApp.Settings().SetTheme(theme.DarkTheme())
+		a.fyneApp.Settings().SetTheme(forcedVariantTheme(theme.VariantDark))
 	case "light":
-		a.fyneApp.Settings().SetTheme(theme.LightTheme())
+		a.fyneApp.Settings().SetTheme(forcedVariantTheme(theme.VariantLight))
 	default:
 		// "system" — leave Fyne default so the platform preference is used where supported.
 	}
@@ -153,7 +153,7 @@ func (a *App) Run() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		a.tray.Quit()
+		log.Printf("shutting down")
 		a.Shutdown()
 	}()
 
@@ -171,13 +171,26 @@ func (a *App) updateTrayCount() {
 func (a *App) Shutdown() {
 	a.shutdownOnce.Do(func() {
 		a.cancel()
-		a.hotkey.Stop()
+		if a.monitor != nil {
+			a.monitor.Wait()
+		}
+		if a.hotkey != nil {
+			a.hotkey.Stop()
+		}
 		if a.ipc != nil {
 			a.ipc.Close()
 		}
-		_ = a.store.Close()
-		a.fyneApp.Driver().DoFromGoroutine(func() {
-			a.fyneApp.Quit()
-		}, false)
+		clipboard.CloseUinput()
+		if a.store != nil {
+			_ = a.store.Close()
+		}
+		if a.tray != nil {
+			a.tray.Quit()
+		}
+		if a.fyneApp != nil {
+			a.fyneApp.Driver().DoFromGoroutine(func() {
+				a.fyneApp.Quit()
+			}, false)
+		}
 	})
 }

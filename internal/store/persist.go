@@ -8,7 +8,9 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/foisal/linboard/internal/atomicfile"
 	"github.com/foisal/linboard/internal/config"
+	"github.com/foisal/linboard/internal/fsutil"
 )
 
 type diskData struct {
@@ -55,7 +57,7 @@ func openFileStore(maxItems int) (*fileStore, error) {
 		if err := s.saveLocked(); err != nil {
 			return nil, err
 		}
-		removeClipFiles(dropped)
+		s.removeClipFiles(dropped)
 	}
 	s.cleanupOrphanImages()
 	return s, nil
@@ -69,6 +71,7 @@ func (s *fileStore) load() error {
 	var data diskData
 	if err := json.Unmarshal(b, &data); err != nil {
 		bak := s.path + ".corrupt"
+		_ = os.Remove(bak)
 		if renErr := os.Rename(s.path, bak); renErr != nil {
 			return err
 		}
@@ -82,9 +85,24 @@ func (s *fileStore) load() error {
 	if s.clips == nil {
 		s.clips = []Clip{}
 	}
-	for _, c := range s.clips {
-		if c.ID >= s.nextID {
-			s.nextID = c.ID + 1
+	changed := false
+	for i := range s.clips {
+		if s.clips[i].ID >= s.nextID {
+			s.nextID = s.clips[i].ID + 1
+		}
+		if s.clips[i].ImagePath == "" {
+			continue
+		}
+		if fsutil.WithinDir(s.imagesDir, s.clips[i].ImagePath) {
+			continue
+		}
+		log.Printf("ignoring clip %d image path outside the image directory", s.clips[i].ID)
+		s.clips[i].ImagePath = ""
+		changed = true
+	}
+	if changed {
+		if err := s.saveLocked(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -96,35 +114,7 @@ func (s *fileStore) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	_, writeErr := f.Write(b)
-	syncErr := f.Sync()
-	closeErr := f.Close()
-	if writeErr != nil {
-		_ = os.Remove(tmp)
-		return writeErr
-	}
-	if syncErr != nil {
-		_ = os.Remove(tmp)
-		return syncErr
-	}
-	if closeErr != nil {
-		_ = os.Remove(tmp)
-		return closeErr
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		// Windows cannot rename over an existing file; Linux replace is atomic.
-		_ = os.Remove(s.path)
-		if err2 := os.Rename(tmp, s.path); err2 != nil {
-			_ = os.Remove(tmp)
-			return err2
-		}
-	}
-	return nil
+	return atomicfile.Write(s.path, b, 0o600)
 }
 
 func (s *fileStore) findByHash(hash string) (int, *Clip) {
@@ -209,10 +199,17 @@ func (s *fileStore) pruneInMemory() []Clip {
 	return dropped
 }
 
-func removeClipFiles(dropped []Clip) {
+func (s *fileStore) removeClipFiles(dropped []Clip) {
 	for _, c := range dropped {
-		if c.ImagePath != "" {
-			_ = os.Remove(c.ImagePath)
+		if c.ImagePath == "" {
+			continue
+		}
+		if !fsutil.WithinDir(s.imagesDir, c.ImagePath) {
+			log.Printf("refusing to delete image outside storage")
+			continue
+		}
+		if err := os.Remove(c.ImagePath); err != nil && !os.IsNotExist(err) {
+			log.Printf("remove image: %v", err)
 		}
 	}
 }

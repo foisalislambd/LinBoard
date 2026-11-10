@@ -87,10 +87,10 @@ func (t *Tray) Quit() {
 }
 
 func formatCount(n int) string {
-	switch {
-	case n == 0:
+	switch n {
+	case 0:
 		return "No items in history"
-	case n == 1:
+	case 1:
 		return "1 item in history"
 	default:
 		return fmt.Sprintf("%d items in history", n)

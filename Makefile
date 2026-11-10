@@ -1,6 +1,6 @@
 # LinBoard — make targets (wrapper around scripts/dev.sh)
 
-.PHONY: help build run rebuild clean clean-cache clean-all clean-legacy deps test vet setup install install-shortcut icons stop
+.PHONY: help build run rebuild clean clean-cache clean-all clean-legacy deps test test-race vet lint setup install install-shortcut icons stop
 
 help:
 	@./scripts/dev.sh help
@@ -31,6 +31,12 @@ test:
 
 vet:
 	@./scripts/dev.sh vet
+
+lint:
+	@./scripts/dev.sh lint
+
+test-race:
+	@./scripts/dev.sh test-race
 
 setup:
 	@./scripts/dev.sh setup

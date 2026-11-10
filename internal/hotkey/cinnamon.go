@@ -3,6 +3,8 @@ package hotkey
 import (
 	"fmt"
 	"log"
+	"os/exec"
+	"strings"
 
 	"github.com/foisal/linboard/internal/config"
 	"github.com/foisal/linboard/internal/platform"
@@ -36,27 +38,53 @@ func setupCinnamonHotkey(exe string) error {
 	path := "/org/cinnamon/desktop/keybindings/custom-keybindings/custom-linboard/"
 	fullSchema := listSchema + ".custom-keybinding:" + path
 
-	paths, err := gsettingsGetArray(listSchema, "custom-keybindings")
-	if err != nil || len(paths) == 0 {
-		paths, err = gsettingsGetArray(listSchema, "custom-list")
-		if err != nil {
-			return err
-		}
+	listKey, err := cinnamonBindingListKey()
+	if err != nil {
+		return err
+	}
+	paths, err := gsettingsGetArray(listSchema, listKey)
+	if err != nil {
+		return err
 	}
 	if !containsPath(paths, path) {
 		paths = append(paths, path)
-		if err := gsettingsSetArray(listSchema, "custom-keybindings", paths); err != nil {
-			if err2 := gsettingsSetArray(listSchema, "custom-list", paths); err2 != nil {
-				return err
-			}
+		if err := gsettingsSetArray(listSchema, listKey, paths); err != nil {
+			return err
 		}
 	}
 
-	if err := gsettingsSet(fullSchema, "name", "LinBoard"); err != nil {
+	if err := gsettingsSetString(fullSchema, "name", "LinBoard"); err != nil {
 		return err
 	}
-	if err := gsettingsSet(fullSchema, "command", exe+" toggle"); err != nil {
+	if err := gsettingsSetString(fullSchema, "command", exe+" toggle"); err != nil {
 		return err
 	}
-	return gsettingsSet(fullSchema, "binding", "<Super>v")
+	return gsettingsSetString(fullSchema, "binding", "<Super>v")
+}
+
+// preferBindingListKey picks the Cinnamon gsettings key that holds custom shortcuts.
+// custom-list is the key current Cinnamon actually reads; custom-keybindings is older.
+func preferBindingListKey(keys []string) string {
+	have := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		have[k] = true
+	}
+	for _, k := range []string{"custom-list", "custom-keybindings"} {
+		if have[k] {
+			return k
+		}
+	}
+	return ""
+}
+
+func cinnamonBindingListKey() (string, error) {
+	out, err := exec.Command("gsettings", "list-keys", "org.cinnamon.desktop.keybindings").Output()
+	if err != nil {
+		return "", err
+	}
+	key := preferBindingListKey(strings.Fields(string(out)))
+	if key == "" {
+		return "", fmt.Errorf("cinnamon keybinding list not found")
+	}
+	return key, nil
 }

@@ -23,6 +23,7 @@ const (
 
 type portalBackend struct {
 	conn     *dbus.Conn
+	session  dbus.ObjectPath
 	onPress  func()
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -42,15 +43,16 @@ func (b *portalBackend) start(onPress func()) error {
 
 	session, err := b.createSession()
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return err
 	}
+	b.session = session
 	if err := b.bindShortcuts(session); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return err
 	}
 	if err := b.watchActivated(); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return err
 	}
 
@@ -61,17 +63,21 @@ func (b *portalBackend) start(onPress func()) error {
 func (b *portalBackend) createSession() (dbus.ObjectPath, error) {
 	opts := map[string]dbus.Variant{
 		"handle_token":         dbus.MakeVariant(randomToken()),
-		"session_handle_token": dbus.MakeVariant("linboard"),
+		"session_handle_token": dbus.MakeVariant(randomToken()),
 	}
 	return b.portalRequest(portalIface+".CreateSession", 30*time.Second, opts)
 }
 
 func (b *portalBackend) bindShortcuts(session dbus.ObjectPath) error {
 	// Portal expects a(sa{sv}): array of (shortcut_id, options).
-	shortcuts := []interface{}{
-		[]interface{}{
-			shortcutID,
-			map[string]dbus.Variant{
+	// A slice of structs encodes as that signature; []interface{} does not.
+	shortcuts := []struct {
+		ID      string
+		Options map[string]dbus.Variant
+	}{
+		{
+			ID: shortcutID,
+			Options: map[string]dbus.Variant{
 				"description":       dbus.MakeVariant(config.AppName),
 				"preferred_trigger": dbus.MakeVariant("LOGO+V"),
 			},
@@ -197,9 +203,15 @@ func (b *portalBackend) readActivated() {
 
 func (b *portalBackend) stop() {
 	b.stopOnce.Do(func() {
-		close(b.stopCh)
+		if b.stopCh != nil {
+			close(b.stopCh)
+		}
+		if b.conn != nil && b.session != "" {
+			obj := b.conn.Object(portalBusName, b.session)
+			_ = obj.Call("org.freedesktop.portal.Session.Close", 0).Err
+		}
 		if b.conn != nil {
-			b.conn.Close()
+			_ = b.conn.Close()
 		}
 	})
 }

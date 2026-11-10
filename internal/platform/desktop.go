@@ -56,5 +56,5 @@ func DesktopName() string {
 func IsGNOME() bool    { return CurrentDesktop() == DesktopGNOME }
 func IsKDE() bool      { return CurrentDesktop() == DesktopKDE }
 func IsXFCE() bool     { return CurrentDesktop() == DesktopXFCE }
-func IsCinnamon() bool  { return CurrentDesktop() == DesktopCinnamon }
-func IsMATE() bool      { return CurrentDesktop() == DesktopMATE }
+func IsCinnamon() bool { return CurrentDesktop() == DesktopCinnamon }
+func IsMATE() bool     { return CurrentDesktop() == DesktopMATE }

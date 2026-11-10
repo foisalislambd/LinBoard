@@ -11,7 +11,7 @@ func portalHasGlobalShortcuts() bool {
 	if err != nil {
 		return false
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	var xml string
 	obj := conn.Object(portalBusName, dbus.ObjectPath(portalObjectPath))

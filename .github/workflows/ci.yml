@@ -9,11 +9,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.26.x'
+          go-version: '1.27.x'
 
       - name: Install build dependencies
         run: |
@@ -23,11 +23,31 @@ jobs:
             libgl1-mesa-dev libxxf86vm-dev libayatana-appindicator3-dev \
             libdbus-1-dev
 
-      - name: Build and verify
+      - name: Verify modules
         run: |
           go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          # v2.15.0 is built with Go 1.27, which matches go.mod's language version.
+          # Older release binaries were built with Go 1.25 and refuse this module.
+          version: v2.15.0
+          args: ./...
+
+      - name: Test
+        run: |
           go vet ./...
           go test ./...
-          go build -ldflags "-s -w" -o linboard ./cmd/linboard
-          ./linboard version
+          go test -race ./internal/atomicfile ./internal/fsutil ./internal/config ./internal/store \
+            ./internal/clipboard ./internal/hotkey ./internal/ipc ./internal/platform \
+            ./internal/singleinstance ./internal/logging ./internal/install \
+            ./internal/relversion
+
+      - name: Build
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION.md)"
+          go build -ldflags "-s -w -X github.com/foisal/linboard/internal/config.AppVersion=${VERSION}" -o linboard ./cmd/linboard
+          test "$(./linboard version)" = "LinBoard ${VERSION}"
           ./linboard help | head -1

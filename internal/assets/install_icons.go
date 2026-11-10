@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/foisal/linboard/internal/config"
 )
 
 //go:embed icons/hicolor
@@ -12,11 +14,11 @@ var hicolorFS embed.FS
 
 // InstallThemeIcons copies the LinBoard icon set to ~/.local/share/icons.
 func InstallThemeIcons() error {
-	home, err := os.UserHomeDir()
+	dataHome, err := config.DataHome()
 	if err != nil {
 		return err
 	}
-	dest := filepath.Join(home, ".local", "share", "icons", "hicolor")
+	dest := filepath.Join(dataHome, "icons", "hicolor")
 	return fs.WalkDir(hicolorFS, "icons/hicolor", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
