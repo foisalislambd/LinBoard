@@ -73,7 +73,9 @@ func NewHistoryWindow(app fyne.App, s *store.Store, cfg *config.Config) *History
 func (h *HistoryWindow) build() {
 	h.win = h.app.NewWindow(config.AppName)
 	h.win.SetIcon(assets.Fyne())
-	h.win.SetFixedSize(true)
+	// Do not call SetFixedSize before the first Show. GLFW bakes the
+	// non-resizable hint into window creation, and xfwm4 then never maps it,
+	// so wmctrl only lists the panel.
 	h.win.Resize(fyne.NewSize(480, 420))
 	h.win.SetCloseIntercept(func() {
 		h.Hide()
@@ -349,8 +351,10 @@ func (h *HistoryWindow) Toggle() {
 func (h *HistoryWindow) Show() {
 	h.search.SetText("")
 	h.refreshList()
-	h.win.CenterOnScreen()
+	// Map first, then center. Centering before the window is mapped makes
+	// xfwm4 drop the MapRequest on some custom sessions.
 	h.win.Show()
+	h.win.CenterOnScreen()
 	h.win.RequestFocus()
 	h.mu.Lock()
 	h.visible = true
@@ -359,6 +363,7 @@ func (h *HistoryWindow) Show() {
 	if count > 0 {
 		h.list.Select(0)
 	}
+	go platform.RaiseWindow(config.AppName)
 }
 
 func (h *HistoryWindow) Hide() {

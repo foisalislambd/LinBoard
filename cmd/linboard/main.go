@@ -92,6 +92,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to start: %v", err)
 	}
+	application.SetCleanup(func() {
+		release()
+		closeLog()
+	})
 
 	application.Run()
 }

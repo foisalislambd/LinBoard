@@ -10,11 +10,6 @@ import (
 
 var errFyneNotReady = errors.New("fyne clipboard not configured")
 
-// ReadToolName returns the active clipboard read backend for diagnostics.
-func ReadToolName() string {
-	return clipboardBackendName()
-}
-
 // CopyToolName returns the active clipboard write backend for diagnostics.
 func CopyToolName() string {
 	return clipboardBackendName()
@@ -31,6 +26,22 @@ func clipboardBackendName() string {
 		return "xsel"
 	}
 	return "none"
+}
+
+// ReadToolName reports the backend the monitor actually reads with.
+// On X11 that is xclip/xsel. Fyne's GLFW clipboard runs on the UI thread and
+// will busy-loop inside the X11 INCR handler on a large image selection.
+func ReadToolName() string {
+	if !platform.UsePortalHotkey() {
+		if haveCommand("xclip") {
+			return "xclip"
+		}
+		if haveCommand("xsel") {
+			return "xsel"
+		}
+		return "none"
+	}
+	return clipboardBackendName()
 }
 
 // WriteText puts UTF-8 text on the system clipboard.
@@ -97,26 +108,52 @@ func chooseClipboardText(reads []backendRead) string {
 }
 
 func readTextContext(ctx context.Context) (string, error) {
+	// X11 reads go through xclip/xsel only. GLFW's getSelectionString runs on
+	// the UI thread, and its INCR loop spins at 100% CPU (and never returns)
+	// when the selection is a multi-megabyte image.
+	if !platform.UsePortalHotkey() {
+		if haveCommand("xclip") {
+			raw, err := readTargets(ctx)
+			if err != nil {
+				return "", nil
+			}
+			if !planReads(raw).ReadText {
+				return "", nil
+			}
+			text, err := readExplicitText(ctx)
+			if err != nil {
+				return "", err
+			}
+			return sanitizeText(text)
+		}
+		if haveCommand("xsel") {
+			text, err := readTextXSel(ctx)
+			if err != nil {
+				return "", nil
+			}
+			return sanitizeText(text)
+		}
+		return "", nil
+	}
+
 	var reads []backendRead
 	if fyneAvailable() {
 		text, err := readTextFyne()
 		reads = append(reads, backendRead{
 			text:          text,
 			err:           err,
-			authoritative: platform.UsePortalHotkey(),
+			authoritative: true,
 		})
 	}
-	if !platform.UsePortalHotkey() || haveCommand("xclip") {
-		if haveCommand("xclip") {
-			text, err := readTextXClip(ctx)
-			reads = append(reads, backendRead{text: text, err: err})
-		}
-		if haveCommand("xsel") {
-			text, err := readTextXSel(ctx)
+	if haveCommand("xclip") {
+		raw, err := readTargets(ctx)
+		if err == nil && planReads(raw).ReadText {
+			text, err := readExplicitText(ctx)
 			reads = append(reads, backendRead{text: text, err: err})
 		}
 	}
-	return chooseClipboardText(reads), nil
+	text := chooseClipboardText(reads)
+	return sanitizeText(text)
 }
 
 func readImageContext(ctx context.Context) ([]byte, error) {

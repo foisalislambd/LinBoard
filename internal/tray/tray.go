@@ -2,6 +2,8 @@ package tray
 
 import (
 	"fmt"
+	"log"
+	"sync"
 
 	"fyne.io/systray"
 
@@ -14,10 +16,12 @@ type Tray struct {
 	onClear   func()
 	onQuit    func()
 	countItem *systray.MenuItem
+	quit      chan struct{}
+	quitOnce  sync.Once
 }
 
 func New() *Tray {
-	return &Tray{}
+	return &Tray{quit: make(chan struct{})}
 }
 
 func (t *Tray) OnShow(fn func())  { t.onShow = fn }
@@ -25,16 +29,46 @@ func (t *Tray) OnClear(fn func()) { t.onClear = fn }
 func (t *Tray) OnQuit(fn func())  { t.onQuit = fn }
 
 func (t *Tray) Run(onReady func()) {
-	systray.Run(func() {
-		t.setup()
+	if statusNotifierAvailable() {
+		systray.Run(func() {
+			t.setup()
+			if onReady != nil {
+				onReady()
+			}
+		}, func() {
+			if t.onQuit != nil {
+				t.onQuit()
+			}
+		})
+		return
+	}
+
+	stop, err := startXEmbed(func() {
+		if t.onShow != nil {
+			t.onShow()
+		}
+	})
+	if err == nil {
+		log.Printf("tray: no StatusNotifier watcher; using the XEmbed system tray (click the icon to show history)")
 		if onReady != nil {
 			onReady()
 		}
-	}, func() {
+		<-t.quit
+		stop()
 		if t.onQuit != nil {
 			t.onQuit()
 		}
-	})
+		return
+	}
+
+	log.Printf("tray: no StatusNotifier watcher and no XEmbed tray (%v). History stays available with %s or `linboard toggle`.", err, config.HotkeyLabel)
+	if onReady != nil {
+		onReady()
+	}
+	<-t.quit
+	if t.onQuit != nil {
+		t.onQuit()
+	}
 }
 
 func (t *Tray) setup() {
@@ -83,6 +117,7 @@ func (t *Tray) SetCount(n int) {
 }
 
 func (t *Tray) Quit() {
+	t.quitOnce.Do(func() { close(t.quit) })
 	systray.Quit()
 }
 
