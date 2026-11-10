@@ -164,7 +164,7 @@ History written by older releases under `~/.config/linboard/data` is moved to th
 
 ## Build from source
 
-LinBoard needs Go 1.26+ and cgo (Fyne). On Debian/Ubuntu:
+LinBoard needs Go 1.27+ and cgo (Fyne). On Debian/Ubuntu:
 
 ```bash
 sudo apt-get install -y gcc pkg-config \
@@ -181,6 +181,12 @@ make lint    # needs golangci-lint, see CONTRIBUTING.md
 make build
 ./linboard version
 ```
+
+`make build` stamps `linboard version` from [`VERSION.md`](VERSION.md) (a single semver, such as `1.0.13`). A bare `go build` reports `dev`.
+
+### Cutting a release
+
+Releases are not created on every push. Edit `VERSION.md` to a semver **strictly greater** than the latest GitHub release tag, then merge to `main`. The release workflow builds the Linux archives, creates tag `v` + that number, and publishes the GitHub release with checksums. If the number is equal to or lower than the latest release, the workflow succeeds and does not publish anything. The first release, when the repository has no semver tag yet, uses `VERSION.md` as-is.
 
 ---
 

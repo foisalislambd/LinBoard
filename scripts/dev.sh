@@ -5,7 +5,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BINARY="${BINARY:-linboard}"
 MAIN_PKG="./cmd/linboard"
-LDFLAGS="${LDFLAGS:- -s -w}"
+# Version reported by `linboard version` comes from VERSION.md.
+APP_VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION.md")"
+LDFLAGS="${LDFLAGS:--s -w -X github.com/foisal/linboard/internal/config.AppVersion=${APP_VERSION}}"
 
 # Prefer an explicit GOROOT, then /usr/local/go when that tree exists.
 # Do not point GOROOT at a missing directory — that breaks a distro Go install.

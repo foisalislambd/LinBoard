@@ -1,7 +1,8 @@
 name: Release
 
-# Auto-release on push to main: version bump → build → tag → GitHub Release
-# Skip with [skip release] in the commit message
+# Publish a GitHub release only when VERSION.md is a semver strictly greater
+# than the newest existing release tag. Equal or lower versions succeed and
+# publish nothing. A repository with no semver release yet publishes VERSION.md.
 on:
   push:
     branches: [main]
@@ -15,66 +16,48 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GO_VERSION: '1.26.x'
+  GO_VERSION: '1.27.x'
 
 jobs:
   version:
-    name: Plan version
+    name: Compare VERSION.md
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
-      skip: ${{ steps.version.outputs.skip }}
+      release: ${{ steps.version.outputs.release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Compute next version
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Compare with existing releases
         id: version
         env:
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
-          if echo "$COMMIT_MSG" | grep -qi '\[skip release\]'; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "tag=" >> "$GITHUB_OUTPUT"
-            echo "version=" >> "$GITHUB_OUTPUT"
-            echo "Skipped — [skip release] in commit message"
-            exit 0
-          fi
-
-          if EXISTING=$(git describe --exact-match --tags HEAD 2>/dev/null); then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "tag=$EXISTING" >> "$GITHUB_OUTPUT"
-            echo "version=${EXISTING#v}" >> "$GITHUB_OUTPUT"
-            echo "Commit already tagged as $EXISTING — skipping"
-            exit 0
-          fi
-
-          LATEST=$(git tag -l 'v*' --sort=-v:refname | head -1)
-          if [ -z "$LATEST" ]; then
-            TAG="v1.0.0"
-          else
-            VER="${LATEST#v}"
-            MAJOR="${VER%%.*}"
-            REST="${VER#*.}"
-            MINOR="${REST%%.*}"
-            PATCH="${REST##*.}"
-            PATCH=$((PATCH + 1))
-            TAG="v${MAJOR}.${MINOR}.${PATCH}"
-          fi
-
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-          echo "Next release: $TAG"
+          args=(-version-file VERSION.md)
+          while IFS= read -r name; do
+            if [ -n "$name" ]; then
+              args+=(-known "$name")
+            fi
+          done < <(git tag -l 'v*')
+          while IFS= read -r name; do
+            if [ -n "$name" ]; then
+              args+=(-known "$name")
+            fi
+          done < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '.[].tag_name')
+          go run ./scripts/planrelease "${args[@]}" | tee -a "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.name }}
     needs: version
-    if: needs.version.outputs.skip != 'true'
+    if: needs.version.outputs.release == 'true'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -90,12 +73,12 @@ jobs:
             asset: linboard-linux-arm64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -121,6 +104,7 @@ jobs:
           go test ./...
           LDFLAGS="-s -w -X github.com/foisal/linboard/internal/config.AppVersion=${VERSION}"
           go build -ldflags "$LDFLAGS" -o linboard ./cmd/linboard
+          test "$(./linboard version)" = "LinBoard ${VERSION}"
           file linboard
           ls -lh linboard
 
@@ -143,7 +127,7 @@ jobs:
           (cd dist && sha256sum "${ASSET}-v${VERSION}.tar.gz" > "${ASSET}-v${VERSION}.tar.gz.sha256")
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: dist/${{ matrix.asset }}-v${{ needs.version.outputs.version }}.tar.gz*
@@ -151,14 +135,14 @@ jobs:
   release:
     name: Tag & publish release
     needs: [version, build]
-    if: needs.version.outputs.skip != 'true'
+    if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -196,13 +180,12 @@ jobs:
           fi
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           name: LinBoard ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           body_path: /tmp/release-body.md
           files: |
             dist/**/*.tar.gz
             dist/**/*.sha256
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -15,7 +15,8 @@ const (
 	HotkeyLabel = "Super+V"
 )
 
-// AppVersion is set at build time via -ldflags (defaults to "dev").
+// AppVersion is the VERSION.md value, injected with -ldflags by make, CI, and
+// the release workflow. A plain `go build` leaves it as "dev".
 var AppVersion = "dev"
 
 type Config struct {
