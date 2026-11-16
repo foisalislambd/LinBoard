@@ -23,6 +23,7 @@ type Monitor struct {
 	store     *store.Store
 	mu        sync.Mutex
 	lastText  string
+	lastPlain string
 	lastImg   string
 	lastStamp uint64
 	haveStamp bool
@@ -118,7 +119,7 @@ func (m *Monitor) prime(ctx context.Context) {
 		text, textErr = sanitizeText(text)
 	}
 	if textErr == nil && text != "" && m.store.IsLatestText(text) {
-		m.setLastText(textKey(text))
+		m.rememberText(text)
 	}
 	if imgErr == nil && len(img) > 0 && store.IsPNG(img) && m.store.IsLatestImage(img) {
 		m.setLastImg(imageFingerprint(img))
@@ -173,10 +174,16 @@ func (m *Monitor) pollOnce(ctx context.Context, wantImage bool) {
 }
 
 // beginRead reports the current selection stamp. skip is true when the stamp
-// is unchanged or the watcher timed out, so the poll must not shell out.
+// is unchanged, so the poll must not shell out.
 func (m *Monitor) beginRead(ctx context.Context) (stamp uint64, watched bool, skip bool) {
 	if ctx.Err() != nil {
 		return 0, false, true
+	}
+	// Mutter keeps a single XWayland CLIPBOARD owner. That owner's TIMESTAMP
+	// stays the same when a Wayland app copies again, so the stamp cannot tell
+	// a new clip from the previous one. Poll the clipboard contents instead.
+	if platform.UsePortalHotkey() {
+		return 0, false, false
 	}
 	fn := m.stamp
 	if fn == nil {
@@ -184,6 +191,9 @@ func (m *Monitor) beginRead(ctx context.Context) (stamp uint64, watched bool, sk
 	}
 	stamp, watched, err := fn(ctx)
 	if !watched {
+		return 0, false, false
+	}
+	if errors.Is(err, errStampTimeout) {
 		return 0, false, false
 	}
 	if err != nil {
@@ -242,7 +252,7 @@ func (m *Monitor) acceptText(text string, err error) {
 		log.Printf("save text clip: %v", err)
 		return
 	}
-	m.setLastText(key)
+	m.rememberText(text)
 	m.notify()
 }
 
@@ -304,10 +314,10 @@ func (m *Monitor) captureNow(ctx context.Context, wantImage bool) (string, error
 	if m.capture != nil {
 		return m.capture(ctx, wantImage)
 	}
-	return defaultCapture(ctx, wantImage)
+	return m.defaultCapture(ctx, wantImage)
 }
 
-func defaultCapture(ctx context.Context, wantImage bool) (string, error, []byte, error) {
+func (m *Monitor) defaultCapture(ctx context.Context, wantImage bool) (string, error, []byte, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err, nil, nil
 	}
@@ -324,7 +334,7 @@ func defaultCapture(ctx context.Context, wantImage bool) (string, error, []byte,
 		text, err = sanitizeText(text)
 		return text, err, nil, nil
 	}
-	text, textErr := readTextContext(ctx)
+	text, textErr := readTextContext(ctx, m.lastPlainText())
 	if !wantImage || !haveCommand("xclip") || ctx.Err() != nil {
 		return text, textErr, nil, nil
 	}
@@ -347,7 +357,7 @@ func captureXClip(ctx context.Context, wantImage bool) (string, error, []byte, e
 	var text string
 	var textErr error
 	if plan.ReadText {
-		text, textErr = readExplicitText(ctx)
+		text, textErr = readExplicitText(ctx, raw)
 		if textErr == nil {
 			text, textErr = sanitizeText(text)
 		}
@@ -368,10 +378,17 @@ func (m *Monitor) notify() {
 	}
 }
 
-func (m *Monitor) setLastText(key string) {
+func (m *Monitor) rememberText(text string) {
 	m.mu.Lock()
-	m.lastText = key
+	m.lastText = textKey(text)
+	m.lastPlain = text
 	m.mu.Unlock()
+}
+
+func (m *Monitor) lastPlainText() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastPlain
 }
 
 func (m *Monitor) setLastImg(key string) {
@@ -423,7 +440,7 @@ func noteTextSeen(text string) {
 	if m == nil {
 		return
 	}
-	m.setLastText(textKey(text))
+	m.rememberText(text)
 }
 
 func noteImageSeen(data []byte) {

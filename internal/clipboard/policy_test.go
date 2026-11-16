@@ -3,6 +3,7 @@ package clipboard
 import (
 	"bytes"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -66,5 +67,16 @@ func TestReadCappedStopsAtLimit(t *testing.T) {
 	got, err = readCapped(bytes.NewReader(exact), 32)
 	if err != nil || !bytes.Equal(got, exact) {
 		t.Fatalf("exact: %d %v", len(got), err)
+	}
+}
+
+func TestAdvertisedTextTargetsPreferPlain(t *testing.T) {
+	got := advertisedTextTargets("text/html\ntext/uri-list\nUTF8_STRING\ntext/plain\nimage/png\n")
+	want := []string{"UTF8_STRING", "text/plain", "text/uri-list", "text/html"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v", got)
+	}
+	if len(advertisedTextTargets("image/png\n")) != 0 {
+		t.Fatal("image targets must not be requested as text")
 	}
 }

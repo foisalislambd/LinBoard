@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -37,15 +38,59 @@ func readTargets(ctx context.Context) (string, error) {
 	return string(out), nil
 }
 
-// readExplicitText asks only for UTF8_STRING and stops after MaxTextBytes.
+// textTargets is the order clipboard text is requested. Plain text wins.
+// Later entries cover copies that do not offer UTF8_STRING (file URIs, HTML).
+var textTargets = []string{
+	"UTF8_STRING",
+	"text/plain;charset=utf-8",
+	"text/plain",
+	"STRING",
+	"text/uri-list",
+	"text/html",
+}
+
+// advertisedTextTargets lists text targets the owner actually offers, with
+// plain text before URIs and HTML. Only advertised targets are requested, so a
+// missing type cannot sit in xclip's 2s timeout.
+func advertisedTextTargets(targets string) []string {
+	have := make(map[string]struct{})
+	for _, line := range strings.Split(targets, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" || !isTextTarget(t) {
+			continue
+		}
+		have[t] = struct{}{}
+	}
+	var ordered []string
+	for _, t := range textTargets {
+		if _, ok := have[t]; ok {
+			ordered = append(ordered, t)
+			delete(have, t)
+		}
+	}
+	var rest []string
+	for t := range have {
+		rest = append(rest, t)
+	}
+	sort.Strings(rest)
+	return append(ordered, rest...)
+}
+
+// readExplicitText asks for an advertised text target and stops after MaxTextBytes.
 // The default xclip target follows whatever the owner advertises, which is how
 // image/png bytes were stored as text.
-func readExplicitText(ctx context.Context) (string, error) {
-	out, err := outputLimited(ctx, "xclip", []string{"-selection", "clipboard", "-t", "UTF8_STRING", "-o"}, clipboardCmdTimeout, store.MaxTextBytes)
-	if err != nil {
-		return "", err
+func readExplicitText(ctx context.Context, targets string) (string, error) {
+	for _, target := range advertisedTextTargets(targets) {
+		out, err := outputLimited(ctx, "xclip", []string{"-selection", "clipboard", "-t", target, "-o"}, clipboardCmdTimeout, store.MaxTextBytes)
+		if errors.Is(err, store.ErrTooLarge) {
+			return "", err
+		}
+		if err != nil || len(bytes.TrimSpace(out)) == 0 {
+			continue
+		}
+		return string(out), nil
 	}
-	return string(out), nil
+	return "", nil
 }
 
 func readTextXSel(ctx context.Context) (string, error) {

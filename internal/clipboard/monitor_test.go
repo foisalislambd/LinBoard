@@ -111,6 +111,7 @@ func TestWaitTimeoutWhileReaderStuck(t *testing.T) {
 }
 
 func TestUnchangedStampDoesNotReread(t *testing.T) {
+	t.Setenv("XDG_SESSION_TYPE", "x11")
 	var stamp atomic.Uint64
 	stamp.Store(5)
 	var calls atomic.Int32
@@ -136,6 +137,26 @@ func TestUnchangedStampDoesNotReread(t *testing.T) {
 	time.Sleep(600 * time.Millisecond)
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("captures after change = %d, want 2", got)
+	}
+}
+
+func TestWaylandRereadsWhenXStampIsStable(t *testing.T) {
+	t.Setenv("XDG_SESSION_TYPE", "wayland")
+	var calls atomic.Int32
+	m := NewMonitor(testMonitorStore(t))
+	m.stamp = func(context.Context) (uint64, bool, error) {
+		return 7, true, nil
+	}
+	m.capture = func(context.Context, bool) (string, error, []byte, error) {
+		n := calls.Add(1)
+		return strings.Repeat("c", int(n)), nil, nil, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.Start(ctx)
+	time.Sleep(900 * time.Millisecond)
+	if got := calls.Load(); got < 2 {
+		t.Fatalf("wayland captures = %d, want at least 2 while the X11 stamp stays the same", got)
 	}
 }
 

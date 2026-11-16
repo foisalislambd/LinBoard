@@ -82,32 +82,53 @@ func WriteImage(data []byte) error {
 }
 
 // backendRead is one clipboard backend's result.
-// authoritative means an empty string is the real clipboard (do not fall through).
+// The first read is the Fyne/GLFW clipboard when authoritative is set.
+// Later reads are the XWayland bridge (xclip).
 type backendRead struct {
 	text          string
 	err           error
 	authoritative bool
 }
 
-// chooseClipboardText picks a clipboard string from backends in order.
-// On Wayland the Fyne read is authoritative, including when it is empty, so a
-// stale X11/XWayland selection is not treated as the current clipboard.
-func chooseClipboardText(reads []backendRead) string {
-	for i, r := range reads {
+// chooseClipboardText picks the clipboard string that actually changed.
+// previous is the last text LinBoard stored. A Fyne value that still equals
+// previous must not hide a new bridge value: after this app writes the
+// clipboard, GLFW often keeps returning that string while another client has
+// already copied something else. A new Fyne value still wins over the bridge,
+// so a stale X11 selection is not stored in its place.
+func chooseClipboardText(reads []backendRead, previous string) string {
+	var fyne string
+	var haveFyne bool
+	var bridge string
+	for _, r := range reads {
 		if r.err != nil {
 			continue
 		}
-		if i == 0 && r.authoritative {
-			return r.text
+		if r.authoritative && !haveFyne {
+			fyne = r.text
+			haveFyne = true
+			continue
 		}
-		if r.text != "" {
-			return r.text
+		if bridge == "" && r.text != "" {
+			bridge = r.text
 		}
 	}
-	return ""
+	if !haveFyne {
+		return bridge
+	}
+	if fyne != "" && fyne != previous {
+		return fyne
+	}
+	if bridge != "" && bridge != previous {
+		return bridge
+	}
+	if fyne != "" {
+		return fyne
+	}
+	return bridge
 }
 
-func readTextContext(ctx context.Context) (string, error) {
+func readTextContext(ctx context.Context, previous string) (string, error) {
 	// X11 reads go through xclip/xsel only. GLFW's getSelectionString runs on
 	// the UI thread, and its INCR loop spins at 100% CPU (and never returns)
 	// when the selection is a multi-megabyte image.
@@ -120,7 +141,7 @@ func readTextContext(ctx context.Context) (string, error) {
 			if !planReads(raw).ReadText {
 				return "", nil
 			}
-			text, err := readExplicitText(ctx)
+			text, err := readExplicitText(ctx, raw)
 			if err != nil {
 				return "", err
 			}
@@ -148,11 +169,11 @@ func readTextContext(ctx context.Context) (string, error) {
 	if haveCommand("xclip") {
 		raw, err := readTargets(ctx)
 		if err == nil && planReads(raw).ReadText {
-			text, err := readExplicitText(ctx)
+			text, err := readExplicitText(ctx, raw)
 			reads = append(reads, backendRead{text: text, err: err})
 		}
 	}
-	text := chooseClipboardText(reads)
+	text := chooseClipboardText(reads, previous)
 	return sanitizeText(text)
 }
 
