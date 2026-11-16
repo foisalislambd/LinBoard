@@ -31,9 +31,33 @@ case "$arch" in
     ;;
 esac
 
+# GitHub's REST API returns HTTP 403 once the unauthenticated rate limit is
+# spent. Resolving /releases/latest by redirect does not use that quota.
+linboard_latest_tag() {
+  local repo="$1"
+  local effective tag
+  effective="$(curl -fsSL -o /dev/null -w '%{url_effective}' \
+    -A "LinBoard-Installer" -L \
+    "https://github.com/${repo}/releases/latest" 2>/dev/null || true)"
+  tag="${effective##*/}"
+  if [[ "$tag" =~ ^v[0-9] ]]; then
+    printf '%s\n' "$tag"
+    return 0
+  fi
+
+  tag="$(curl -fsSL -A "LinBoard-Installer" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null \
+    | sed -n 's/^[[:space:]]*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true)"
+  if [[ "$tag" =~ ^v[0-9] ]]; then
+    printf '%s\n' "$tag"
+    return 0
+  fi
+  return 1
+}
+
 if [ "$LINBOARD_RELEASE" = "latest" ]; then
-  API="https://api.github.com/repos/${REPO}/releases/latest"
-  VERSION_TAG="$(curl -fsSL "$API" | sed -n 's/^[[:space:]]*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  VERSION_TAG="$(linboard_latest_tag "$REPO" || true)"
 else
   VERSION_TAG="$LINBOARD_RELEASE"
   case "$VERSION_TAG" in

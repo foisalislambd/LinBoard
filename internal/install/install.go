@@ -87,7 +87,7 @@ func hotkeyExecutable() (string, error) {
 func desktopEntry(execPath string, autostart bool) string {
 	extra := ""
 	if autostart {
-		extra = "X-GNOME-Autostart-enabled=true\n"
+		extra = "X-GNOME-Autostart-enabled=true\nX-GNOME-Autostart-Delay=2\n"
 	}
 	return fmt.Sprintf(`[Desktop Entry]
 Type=Application
@@ -141,27 +141,39 @@ func copyFile(src, dst string) error {
 
 func writeLauncher(path, linboardExe string) error {
 	script := fmt.Sprintf(`#!/usr/bin/env bash
-set -euo pipefail
+# A missing or failing sg must still start the app. Do not use set -e.
+set -uo pipefail
 
 # Detach when run from a terminal so the app survives after the shell closes.
 if [[ -t 1 ]] && [[ "${LINBOARD_FOREGROUND:-}" != "1" ]]; then
-  LINBOARD_FOREGROUND=1 nohup "$0" "$@" >/dev/null 2>&1 &
+  export LINBOARD_FOREGROUND=1
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$0" "$@" </dev/null >/dev/null 2>&1 &
+  else
+    nohup "$0" "$@" </dev/null >/dev/null 2>&1 &
+  fi
   disown 2>/dev/null || true
   exit 0
 fi
 
 LB=%q
-run() {
-  exec "$LB" "$@"
-}
+if [[ ! -x "$LB" ]]; then
+  echo "linboard: binary not found" >&2
+  exit 1
+fi
+
 if [[ -w /dev/uinput ]]; then
-  run "$@"
+  exec "$LB" "$@"
 fi
-if getent group input 2>/dev/null | awk -F: '{print $4}' | tr ',' '\n' | grep -Fxq -e "$USER" \
-   && ! id -nG | tr ' ' '\n' | grep -Fxq input; then
-  exec sg input -c "$(printf 'exec %%q ' "$LB" "$@")"
+
+me="${USER:-$(id -un)}"
+if command -v sg >/dev/null 2>&1 \
+  && getent group input 2>/dev/null | awk -F: '{print $4}' | tr ',' '\n' | grep -Fxq -e "$me" \
+  && ! id -nG | tr ' ' '\n' | grep -Fxq input; then
+  sg input -c "$(printf 'exec %%q ' "$LB" "$@")" && exit 0
 fi
-run "$@"
+
+exec "$LB" "$@"
 `, linboardExe)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		return err

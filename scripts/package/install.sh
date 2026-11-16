@@ -84,6 +84,7 @@ Terminal=false
 Categories=Utility;
 StartupNotify=false
 X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=2
 EOF
 
 if declare -F linboard_post_install_setup >/dev/null 2>&1; then

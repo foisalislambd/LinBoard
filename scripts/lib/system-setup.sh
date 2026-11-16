@@ -60,7 +60,7 @@ linboard_download() {
   local label="${3:-$(basename "$dest")}"
 
   local total_bytes=""
-  total_bytes="$(curl -fsSLI "$url" 2>/dev/null | grep -i '^content-length:' | tail -1 | awk '{print $2}' | tr -d '\r')" || true
+  total_bytes="$(curl -fsSLI -A "LinBoard-Installer" "$url" 2>/dev/null | grep -i '^content-length:' | tail -1 | awk '{print $2}' | tr -d '\r')" || true
 
   if [[ -n "$total_bytes" && "$total_bytes" =~ ^[0-9]+$ ]]; then
     linboard_log "Downloading ${label} ($(linboard_bytes_to_mb "$total_bytes") MB)..."
@@ -70,10 +70,10 @@ linboard_download() {
 
   if [[ -t 1 ]]; then
     # Live progress bar (speed + % when Content-Length known)
-    curl -fL --progress-bar "$url" -o "$dest"
+    curl -fL -A "LinBoard-Installer" --progress-bar "$url" -o "$dest"
     echo ""
   else
-    curl -fSL "$url" -o "$dest"
+    curl -fSL -A "LinBoard-Installer" "$url" -o "$dest"
   fi
 
   if [[ -f "$dest" ]]; then
@@ -184,11 +184,24 @@ linboard_ensure_input_group() {
   linboard_warn "Log out and log back in for auto-paste to work"
 }
 
+# sg (from util-linux-extra on Ubuntu 24.04+) lets this login use the input
+# group without a logout. The app still starts when the package is missing.
+linboard_ensure_sg() {
+  linboard_have sg && return 0
+  linboard_detect_os
+  case "${LINBOARD_PM:-}" in
+    apt)
+      linboard_install_packages util-linux-extra || true
+      ;;
+  esac
+}
+
 linboard_install_paste_tools() {
   linboard_detect_session
   linboard_ensure_uinput_module
   linboard_ensure_uinput_udev_rule || true
   linboard_ensure_input_group
+  linboard_ensure_sg || true
 
   # X11 sessions: xdotool helps focus + paste for legacy apps.
   if [[ "$LINBOARD_SESSION" == "x11" ]] && ! linboard_have xdotool; then
@@ -205,36 +218,45 @@ linboard_install_launcher() {
 
   cat > "$launcher" <<'EOF'
 #!/usr/bin/env bash
-# LinBoard launcher — uses sg input when group was added but session is stale.
-set -euo pipefail
+# LinBoard launcher — joins the input group when this login does not have it yet.
+# A missing or failing sg must still start the app (autostart and the installer
+# both call this script). Do not use `set -e`: a failed sg has to fall through.
+set -uo pipefail
 
 # Detach when run from a terminal so the app survives after the shell closes.
 if [[ -t 1 ]] && [[ "${LINBOARD_FOREGROUND:-}" != "1" ]]; then
-  LINBOARD_FOREGROUND=1 nohup "$0" "$@" >/dev/null 2>&1 &
+  export LINBOARD_FOREGROUND=1
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$0" "$@" </dev/null >/dev/null 2>&1 &
+  else
+    nohup "$0" "$@" </dev/null >/dev/null 2>&1 &
+  fi
   disown 2>/dev/null || true
   exit 0
 fi
 
 LB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/linboard"
-if [[ -x "$LB" ]]; then
-  :
-elif [[ -x "$HOME/.local/bin/linboard" ]]; then
+if [[ ! -x "$LB" && -x "$HOME/.local/bin/linboard" ]]; then
   LB="$HOME/.local/bin/linboard"
-else
+fi
+if [[ ! -x "$LB" ]]; then
   echo "linboard: binary not found" >&2
   exit 1
 fi
-run() {
-  exec "$LB" "$@"
-}
+
 if [[ -w /dev/uinput ]]; then
-  run "$@"
+  exec "$LB" "$@"
 fi
-if getent group input 2>/dev/null | awk -F: '{print $4}' | tr ',' '\n' | grep -Fxq -e "$USER" \
-   && ! id -nG | tr ' ' '\n' | grep -Fxq input; then
-  exec sg input -c "$(printf 'exec %q ' "$LB" "$@")"
+
+me="${USER:-$(id -un)}"
+if command -v sg >/dev/null 2>&1 \
+  && getent group input 2>/dev/null | awk -F: '{print $4}' | tr ',' '\n' | grep -Fxq -e "$me" \
+  && ! id -nG | tr ' ' '\n' | grep -Fxq input; then
+  # Do not exec sg. If it is missing or refuses the group, start the binary anyway.
+  sg input -c "$(printf 'exec %q ' "$LB" "$@")" && exit 0
 fi
-run "$@"
+
+exec "$LB" "$@"
 EOF
   chmod +x "$launcher"
 }
@@ -347,6 +369,29 @@ linboard_ensure_path() {
   export PATH="$bin_dir:$PATH"
 }
 
+linboard_app_running() {
+  pgrep -x linboard >/dev/null 2>&1
+}
+
+linboard_wait_until_running() {
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    linboard_app_running && return 0
+    sleep 0.3
+  done
+  return 1
+}
+
+linboard_spawn_detached() {
+  local cmd="$1"
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$cmd" </dev/null >/dev/null 2>&1 &
+  else
+    nohup "$cmd" </dev/null >/dev/null 2>&1 &
+  fi
+  disown 2>/dev/null || true
+}
+
 linboard_start_app() {
   local bin_dir="$1"
   local exe="$bin_dir/linboard"
@@ -355,24 +400,50 @@ linboard_start_app() {
   [[ -x "$exe" ]] || return 0
   linboard_install_launcher "$bin_dir"
 
-  pkill -x linboard 2>/dev/null || true
-  sleep 0.3
+  if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+    linboard_warn "No display detected — LinBoard will start on next login"
+    return 0
+  fi
+
+  if linboard_app_running; then
+    linboard_log "Restarting LinBoard..."
+    pkill -x linboard 2>/dev/null || true
+    sleep 0.4
+  fi
 
   linboard_log "Starting LinBoard in the background..."
-  if [[ -n "${DISPLAY:-}" ]] || [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
-    local run="$exe"
-    [[ -x "$launcher" ]] && run="$launcher"
-    nohup "$run" >/dev/null 2>&1 &
-    disown 2>/dev/null || true
-    sleep 0.5
-    if pgrep -x linboard >/dev/null; then
-      linboard_log "LinBoard is running (system tray)"
-    else
-      linboard_warn "Start manually: linboard-start"
+
+  # Login autostart is a systemd user unit generated from the desktop file.
+  # It is not started for a file added during an already-open session, so
+  # start that unit now. The next login starts it the same way.
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    systemctl --user reset-failed app-linboard@autostart.service >/dev/null 2>&1 || true
+    systemctl --user start app-linboard@autostart.service >/dev/null 2>&1 || true
+    if linboard_wait_until_running; then
+      linboard_log "LinBoard is running (system tray) and will start on login"
+      return 0
     fi
-  else
-    linboard_warn "No display detected — run 'linboard-start' after you log in to your desktop"
   fi
+
+  local run="$exe"
+  [[ -x "$launcher" ]] && run="$launcher"
+  linboard_spawn_detached "$run"
+  if linboard_wait_until_running; then
+    linboard_log "LinBoard is running (system tray) and will start on login"
+    return 0
+  fi
+
+  if [[ "$run" != "$exe" ]]; then
+    linboard_warn "Launcher exited — starting the LinBoard binary directly"
+    linboard_spawn_detached "$exe"
+    if linboard_wait_until_running; then
+      linboard_log "LinBoard is running (system tray) and will start on login"
+      return 0
+    fi
+  fi
+
+  linboard_warn "Could not start LinBoard. Run: $exe"
 }
 
 # Run before downloading / installing LinBoard binary (once per install run)
