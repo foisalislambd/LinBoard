@@ -29,19 +29,20 @@ func clipboardBackendName() string {
 }
 
 // ReadToolName reports the backend the monitor actually reads with.
-// On X11 that is xclip/xsel. Fyne's GLFW clipboard runs on the UI thread and
-// will busy-loop inside the X11 INCR handler on a large image selection.
+// Fyne's GLFW clipboard runs on the UI thread and busy-loops inside the
+// selection handler on a large HTML or image offer, so reads go through
+// xclip/xsel whenever those tools exist.
 func ReadToolName() string {
-	if !platform.UsePortalHotkey() {
-		if haveCommand("xclip") {
-			return "xclip"
-		}
-		if haveCommand("xsel") {
-			return "xsel"
-		}
-		return "none"
+	if haveCommand("xclip") {
+		return "xclip"
 	}
-	return clipboardBackendName()
+	if !platform.UsePortalHotkey() && haveCommand("xsel") {
+		return "xsel"
+	}
+	if fyneAvailable() {
+		return "fyne"
+	}
+	return "none"
 }
 
 // WriteText puts UTF-8 text on the system clipboard.
@@ -128,7 +129,7 @@ func chooseClipboardText(reads []backendRead, previous string) string {
 	return bridge
 }
 
-func readTextContext(ctx context.Context, previous string) (string, error) {
+func readTextContext(ctx context.Context) (string, error) {
 	// X11 reads go through xclip/xsel only. GLFW's getSelectionString runs on
 	// the UI thread, and its INCR loop spins at 100% CPU (and never returns)
 	// when the selection is a multi-megabyte image.
@@ -157,24 +158,32 @@ func readTextContext(ctx context.Context, previous string) (string, error) {
 		return "", nil
 	}
 
-	var reads []backendRead
-	if fyneAvailable() {
-		text, err := readTextFyne()
-		reads = append(reads, backendRead{
-			text:          text,
-			err:           err,
-			authoritative: true,
-		})
-	}
+	// GLFW's clipboard read runs on the UI thread and does not return when the
+	// offer is large. xclip is capped and timed out, so it is the read path
+	// whenever it is installed.
 	if haveCommand("xclip") {
 		raw, err := readTargets(ctx)
-		if err == nil && planReads(raw).ReadText {
-			text, err := readExplicitText(ctx, raw)
-			reads = append(reads, backendRead{text: text, err: err})
+		if err != nil {
+			return "", nil
 		}
+		if !planReads(raw).ReadText {
+			return "", nil
+		}
+		text, err := readExplicitText(ctx, raw)
+		if err != nil {
+			return "", err
+		}
+		return sanitizeText(text)
 	}
-	text := chooseClipboardText(reads, previous)
-	return sanitizeText(text)
+
+	if fyneAvailable() {
+		text, err := readTextFyne()
+		if err != nil {
+			return "", nil
+		}
+		return sanitizeText(text)
+	}
+	return "", nil
 }
 
 func readImageContext(ctx context.Context) ([]byte, error) {

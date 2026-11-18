@@ -23,7 +23,6 @@ type Monitor struct {
 	store     *store.Store
 	mu        sync.Mutex
 	lastText  string
-	lastPlain string
 	lastImg   string
 	lastStamp uint64
 	haveStamp bool
@@ -334,7 +333,7 @@ func (m *Monitor) defaultCapture(ctx context.Context, wantImage bool) (string, e
 		text, err = sanitizeText(text)
 		return text, err, nil, nil
 	}
-	text, textErr := readTextContext(ctx, m.lastPlainText())
+	text, textErr := readTextContext(ctx)
 	if !wantImage || !haveCommand("xclip") || ctx.Err() != nil {
 		return text, textErr, nil, nil
 	}
@@ -381,14 +380,7 @@ func (m *Monitor) notify() {
 func (m *Monitor) rememberText(text string) {
 	m.mu.Lock()
 	m.lastText = textKey(text)
-	m.lastPlain = text
 	m.mu.Unlock()
-}
-
-func (m *Monitor) lastPlainText() string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.lastPlain
 }
 
 func (m *Monitor) setLastImg(key string) {
