@@ -320,9 +320,19 @@ func (m *Monitor) defaultCapture(ctx context.Context, wantImage bool) (string, e
 	if err := ctx.Err(); err != nil {
 		return "", err, nil, nil
 	}
-	// One X11 selection client at a time, and TARGETS is read once per poll so
-	// text and image requests cannot race or pull the wrong target.
-	if !platform.UsePortalHotkey() && haveCommand("xclip") {
+	// Prefer the open X connection. Spawning xclip on every Wayland poll costs a
+	// process, and a second TARGETS request can observe a different clipboard
+	// than the text request. xclip remains the fallback for INCR and HTML.
+	if text, hasImage, ok := peekClipboard(ctx); ok {
+		var img []byte
+		var imgErr error
+		if wantImage && hasImage && haveCommand("xclip") {
+			img, imgErr = readImageXClip(ctx)
+		}
+		text, err := sanitizeText(text)
+		return text, err, img, imgErr
+	}
+	if haveCommand("xclip") {
 		return captureXClip(ctx, wantImage)
 	}
 	if !platform.UsePortalHotkey() && haveCommand("xsel") {
@@ -333,15 +343,15 @@ func (m *Monitor) defaultCapture(ctx context.Context, wantImage bool) (string, e
 		text, err = sanitizeText(text)
 		return text, err, nil, nil
 	}
-	text, textErr := readTextContext(ctx)
-	if !wantImage || !haveCommand("xclip") || ctx.Err() != nil {
-		return text, textErr, nil, nil
+	if fyneAvailable() {
+		text, err := readTextFyne()
+		if err != nil {
+			return "", nil, nil, nil
+		}
+		text, err = sanitizeText(text)
+		return text, err, nil, nil
 	}
-	if !clipboardHasImage(ctx) {
-		return text, textErr, nil, nil
-	}
-	img, imgErr := readImageContext(ctx)
-	return text, textErr, img, imgErr
+	return "", nil, nil, nil
 }
 
 func captureXClip(ctx context.Context, wantImage bool) (string, error, []byte, error) {

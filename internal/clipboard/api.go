@@ -1,7 +1,6 @@
 package clipboard
 
 import (
-	"context"
 	"errors"
 	"fmt"
 
@@ -127,72 +126,6 @@ func chooseClipboardText(reads []backendRead, previous string) string {
 		return fyne
 	}
 	return bridge
-}
-
-func readTextContext(ctx context.Context) (string, error) {
-	// X11 reads go through xclip/xsel only. GLFW's getSelectionString runs on
-	// the UI thread, and its INCR loop spins at 100% CPU (and never returns)
-	// when the selection is a multi-megabyte image.
-	if !platform.UsePortalHotkey() {
-		if haveCommand("xclip") {
-			raw, err := readTargets(ctx)
-			if err != nil {
-				return "", nil
-			}
-			if !planReads(raw).ReadText {
-				return "", nil
-			}
-			text, err := readExplicitText(ctx, raw)
-			if err != nil {
-				return "", err
-			}
-			return sanitizeText(text)
-		}
-		if haveCommand("xsel") {
-			text, err := readTextXSel(ctx)
-			if err != nil {
-				return "", nil
-			}
-			return sanitizeText(text)
-		}
-		return "", nil
-	}
-
-	// GLFW's clipboard read runs on the UI thread and does not return when the
-	// offer is large. xclip is capped and timed out, so it is the read path
-	// whenever it is installed.
-	if haveCommand("xclip") {
-		raw, err := readTargets(ctx)
-		if err != nil {
-			return "", nil
-		}
-		if !planReads(raw).ReadText {
-			return "", nil
-		}
-		text, err := readExplicitText(ctx, raw)
-		if err != nil {
-			return "", err
-		}
-		return sanitizeText(text)
-	}
-
-	if fyneAvailable() {
-		text, err := readTextFyne()
-		if err != nil {
-			return "", nil
-		}
-		return sanitizeText(text)
-	}
-	return "", nil
-}
-
-func readImageContext(ctx context.Context) ([]byte, error) {
-	if haveCommand("xclip") {
-		if data, err := readImageXClip(ctx); err == nil && len(data) > 0 {
-			return data, nil
-		}
-	}
-	return nil, fmt.Errorf("clipboard image read failed")
 }
 
 func textWriters() []func(string) error {

@@ -5,14 +5,16 @@ package clipboard
 /*
 #cgo pkg-config: x11
 #include <X11/Xlib.h>
+#include <X11/Xatom.h>
 #include <errno.h>
 #include <stdint.h>
+#include <string.h>
 #include <sys/select.h>
 #include <time.h>
 
 static Display *watchDisplay;
 static Window watchWindow;
-static Atom atomClipboard, atomTimestamp, atomStampProp;
+static Atom atomClipboard, atomTimestamp, atomStampProp, atomUtf8, atomIncr;
 static int watchState; // 0 unknown, 1 open, -1 unavailable
 
 static int ensureWatch(void) {
@@ -30,6 +32,8 @@ static int ensureWatch(void) {
 	atomClipboard = XInternAtom(watchDisplay, "CLIPBOARD", False);
 	atomTimestamp = XInternAtom(watchDisplay, "TIMESTAMP", False);
 	atomStampProp = XInternAtom(watchDisplay, "LINBOARD_STAMP", False);
+	atomUtf8 = XInternAtom(watchDisplay, "UTF8_STRING", False);
+	atomIncr = XInternAtom(watchDisplay, "INCR", False);
 	watchState = 1;
 	return 1;
 }
@@ -125,11 +129,115 @@ static int clipboardStampC(unsigned long *out, int timeoutMs) {
 	}
 	return 1;
 }
+
+// clipboardPeekC reads plain text without spawning a process.
+// 0: no X display. 1: success (*outLen may be 0). 2: timeout.
+// 3: the offer is INCR, too large, or not plain text — caller uses xclip.
+// *hasImage is set on success when an image/* target is advertised.
+static int clipboardPeekC(char *buf, int cap, int *outLen, int *hasImage, int timeoutMs) {
+	*outLen = 0;
+	*hasImage = 0;
+	if (!ensureWatch() || cap < 1) {
+		return 0;
+	}
+	Window owner = XGetSelectionOwner(watchDisplay, atomClipboard);
+	if (!owner) {
+		return 1;
+	}
+
+	Atom targets = XInternAtom(watchDisplay, "TARGETS", False);
+	XDeleteProperty(watchDisplay, watchWindow, atomStampProp);
+	XConvertSelection(watchDisplay, atomClipboard, targets, atomStampProp,
+		watchWindow, CurrentTime);
+	XFlush(watchDisplay);
+	int reply = waitForSelection(timeoutMs);
+	if (reply == 0) {
+		return 2;
+	}
+	if (reply < 0) {
+		return 1;
+	}
+
+	Atom actualType;
+	int actualFormat;
+	unsigned long count = 0, remaining = 0;
+	unsigned char *data = NULL;
+	int status = XGetWindowProperty(watchDisplay, watchWindow, atomStampProp,
+		0, 64, True, AnyPropertyType,
+		&actualType, &actualFormat, &count, &remaining, &data);
+	if (status != Success || !data || actualFormat != 32) {
+		if (data) {
+			XFree(data);
+		}
+		return 2;
+	}
+
+	Atom want = None;
+	int otherText = 0;
+	Atom *atoms = (Atom *)data;
+	unsigned long i;
+	for (i = 0; i < count; i++) {
+		char *name = XGetAtomName(watchDisplay, atoms[i]);
+		if (!name) {
+			continue;
+		}
+		if (strncmp(name, "image/", 6) == 0) {
+			*hasImage = 1;
+		}
+		if (atoms[i] == atomUtf8 || strcmp(name, "UTF8_STRING") == 0) {
+			want = atomUtf8;
+		} else if (want != atomUtf8 && (strcmp(name, "text/plain") == 0 ||
+			strcmp(name, "text/plain;charset=utf-8") == 0 ||
+			atoms[i] == XA_STRING)) {
+			want = atoms[i];
+		} else if (strncmp(name, "text/", 5) == 0) {
+			// HTML or a URI list, used only when no plain target exists.
+			otherText = 1;
+		}
+		XFree(name);
+	}
+	XFree(data);
+	if (want == None) {
+		return otherText ? 3 : 1;
+	}
+
+	XDeleteProperty(watchDisplay, watchWindow, atomStampProp);
+	XConvertSelection(watchDisplay, atomClipboard, want, atomStampProp,
+		watchWindow, CurrentTime);
+	XFlush(watchDisplay);
+	reply = waitForSelection(timeoutMs);
+	if (reply == 0) {
+		return 2;
+	}
+	if (reply < 0) {
+		return 1;
+	}
+	status = XGetWindowProperty(watchDisplay, watchWindow, atomStampProp,
+		0, (long)(cap / 4) + 1, True, AnyPropertyType,
+		&actualType, &actualFormat, &count, &remaining, &data);
+	if (status != Success || !data) {
+		if (data) {
+			XFree(data);
+		}
+		return 2;
+	}
+	if (actualType == atomIncr || actualFormat != 8 || remaining > 0 || count > (unsigned long)cap) {
+		XFree(data);
+		return 3;
+	}
+	if (count > 0) {
+		memcpy(buf, data, count);
+	}
+	*outLen = (int)count;
+	XFree(data);
+	return 1;
+}
 */
 import "C"
 import (
 	"context"
 	"errors"
+	"unsafe"
 )
 
 // errStampTimeout means the selection owner did not answer. The poll skips the
@@ -150,5 +258,25 @@ func clipboardStamp(ctx context.Context) (uint64, bool, error) {
 		return 0, true, errStampTimeout
 	default:
 		return uint64(stamp), true, nil
+	}
+}
+
+// peekClipboard reads the current plain-text offer on the open X connection.
+// ok is false when the caller should use xclip instead (no display, timeout,
+// INCR, or a target this peek does not decode).
+func peekClipboard(ctx context.Context) (text string, hasImage bool, ok bool) {
+	if err := ctx.Err(); err != nil {
+		return "", false, false
+	}
+	buf := make([]byte, 256*1024)
+	var n, image C.int
+	switch C.clipboardPeekC((*C.char)(unsafe.Pointer(&buf[0])), C.int(len(buf)), &n, &image, 200) {
+	case 1:
+		if n < 0 || int(n) > len(buf) {
+			return "", false, false
+		}
+		return string(buf[:int(n)]), image != 0, true
+	default:
+		return "", false, false
 	}
 }

@@ -117,16 +117,6 @@ func writeImageXClip(data []byte) error {
 	return pipeToCommand("xclip", []string{"-selection", "clipboard", "-t", "image/png", "-i"}, data, imageCmdTimeout)
 }
 
-// clipboardHasImage reports whether the X11 clipboard advertises an image target.
-// This avoids pulling multi-megabyte payloads on every poll when the clipboard is text.
-func clipboardHasImage(ctx context.Context) bool {
-	out, err := readTargets(ctx)
-	if err != nil {
-		return false
-	}
-	return planReads(out).ReadImage
-}
-
 // outputLimited runs a clipboard tool and keeps at most maxBytes of stdout.
 // The process group is killed when the context ends or the payload is oversize,
 // so a stuck xclip cannot pin a core or block shutdown.
